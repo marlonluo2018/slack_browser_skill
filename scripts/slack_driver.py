@@ -37,8 +37,14 @@ except ImportError:  # pragma: no cover - environment problem, reported to the u
 
 SLACK = "https://app.slack.com/client"
 DEFAULT_TIMEOUT_MS = 20_000
-# IBM workspace: ibm-gbs-lk (E27SFGS2W). Override with BRAINCLAW_SLACK_TEAM.
+# The workspace id (the `/client/<TEAM>` segment). Defaults to the IBM workspace
+# ibm-gbs-lk; anyone on another workspace sets BRAINCLAW_SLACK_TEAM to theirs.
 TEAM = os.environ.get("BRAINCLAW_SLACK_TEAM", "E27SFGS2W")
+# Where `login` starts. The default is the IBM enterprise entry, which redirects
+# into app.slack.com through IBM SSO; a standalone workspace signs in on its own
+# host instead (https://<workspace>.slack.com/), so this is an override, not a
+# constant — without it the first run on any other workspace cannot even start.
+LOGIN_URL = os.environ.get("BRAINCLAW_SLACK_LOGIN_URL", "https://ibm.enterprise.slack.com/")
 # The Slack SPA needs ~15s to render its sidebar in Playwright's Chromium;
 # 8s probes returned an empty <body> and looked like a blocked session.
 BOOT_MS = int(os.environ.get("BRAINCLAW_SLACK_BOOT_MS", "15000"))
@@ -77,9 +83,9 @@ def fail_auth() -> int:
         "signed_in": False,
         "profile": str(profile_dir()),
         "hint": "Slack session expired. Ask the user to run the login command in a visible "
-                "browser and sign in with IBM SSO; the agent must never handle the credentials.",
+                "browser and sign in with the workspace SSO; the agent must never handle the credentials.",
         "hint_zh": "Slack 登录已失效。请运行 `slack_driver.py login`，会弹出浏览器窗口，"
-                   "由用户在窗口里用 IBM SSO 登录（凭据只在窗口内输入，不要交给 agent）。",
+                   "由用户在窗口里用工作区 SSO 登录（凭据只在窗口内输入，不要交给 agent）。",
         "command": f'py -3 assistant_brain/skills/slack_browser_skill/scripts/slack_driver.py login',
     })
     return AUTH_EXIT
@@ -906,9 +912,11 @@ def main() -> int:
                 return serve(page)
 
             if args.command == "login":
-                # Enterprise entry redirects into app.slack.com via IBM SSO;
-                # app.slack.com directly shows the generic sign-in form instead.
-                page.goto("https://ibm.enterprise.slack.com/", wait_until="domcontentloaded")
+                # The workspace entry redirects into app.slack.com through SSO
+                # (IBM by default); app.slack.com directly shows the generic
+                # sign-in form instead, so never start there.
+                page.goto(LOGIN_URL, wait_until="domcontentloaded")
+                print(f"login entry: {LOGIN_URL} (workspace {TEAM})", file=sys.stderr)
                 wait_s = int(os.environ.get("BRAINCLAW_LOGIN_WAIT", "300"))
                 print(f"Sign in in the window that opened; waiting up to {wait_s}s…", file=sys.stderr)
                 deadline = time.time() + wait_s

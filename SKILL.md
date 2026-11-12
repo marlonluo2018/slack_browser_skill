@@ -36,6 +36,18 @@ The stored profile is what keeps the session, so this happens once per machine �
 
 The session lives in `%LOCALAPPDATA%\BrainClaw\slack-profile`, not in a running browser, so closing the window after a successful login keeps it. Env overrides, all optional: `BRAINCLAW_SLACK_PROFILE` (profile directory), `BRAINCLAW_SLACK_TEAM` (workspace id, default `E27SFGS2W` — the IBM workspace), `BRAINCLAW_SLACK_BOOT_MS` (default 15000; raise it on a slow link).
 
+### Using a workspace other than IBM's
+
+The defaults are IBM: entry `https://ibm.enterprise.slack.com/` (IBM SSO) and workspace id `E27SFGS2W`. On another workspace set both before the first run:
+
+```powershell
+$env:BRAINCLAW_SLACK_LOGIN_URL = "https://<your-workspace>.slack.com/"  # where sign-in starts
+$env:BRAINCLAW_SLACK_TEAM      = "<your-workspace>"                    # the /client/<TEAM> id
+```
+
+For a standalone workspace both values are the subdomain; for an Enterprise Grid org the login host is `<org>.enterprise.slack.com` while the team id stays the client id (IBM is a grid, which is why its two values differ).
+
+**Not verified against a second workspace** (2026-11-12 — none was available), so treat the first run there as a test: `login`, then `whoami`, then a self-DM, before relying on it for real sends.
 ## Driver usage
 
 Requires `playwright` (`py -3 -m pip install playwright`) and a Chromium build (`py -3 -m playwright install chromium`).
@@ -196,7 +208,7 @@ Exit code 3 means **"a human must sign in"** — distinct from 1 (usage/data pro
 
 **What the agent does on exit 3:** nothing automatic. Tell the user, in their language, that the Slack login has expired and ask them to run the login command; the browser window that opens is where they type the credentials. Never ask for, type, or store the password — the same rule as every other credential in this repo.
 
-Suggested wording: “Slack 登录已失效，需要你重新登录一次：运行 `py -3 assistant_brain/skills/slack_browser_skill/scripts/slack_driver.py login`，会弹出浏览器窗口，你在窗口里用 IBM SSO 登录即可（登完窗口可以直接关，会话会保存）。”
+Suggested wording: “Slack 登录已失效，需要你重新登录一次：运行 `py -3 assistant_brain/skills/slack_browser_skill/scripts/slack_driver.py login`，会弹出浏览器窗口，你在窗口里用工作区 SSO 登录即可（登完窗口可以直接关，会话会保存）。”
 
 **Before relaying an expiry, rule out the false alarm.** A single failed probe is not evidence: `signed_in()` already retries once, and a leftover overlay produces the identical symptom. If the user insists the session should be valid, run `diagnose --seconds 45` and look at the screenshot — an open quick-switcher means the session is fine.
 
