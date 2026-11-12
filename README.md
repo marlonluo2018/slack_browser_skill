@@ -35,21 +35,29 @@ It installs Playwright, downloads its Chromium build (~130 MB, once), creates `c
 
 By hand, the same steps are `py -3 -m pip install playwright` and `py -3 -m playwright install chromium`.
 
-## Quick start
+## Who does what
+
+**The agent runs everything except the sign-in. Your only job is to sign in once, in the window it
+opens.**
+
+1. The agent runs `login`. A Chromium window opens and waits while **you** enter the SSO details it
+   asks for — password, MFA, passkey, whatever the workspace requires. The agent never sees or types
+   those, and the window closes by itself once the app loads.
+2. The session is now in the profile, so the agent runs `send`, `read`, `serve` and the rest
+   **headless** — nothing appears on your screen.
+3. When a run reports exit code 3 (`signed_in: false`), the session has expired and the agent asks
+   you to sign in again. That is the only time it needs you.
+
+The commands below are what the **agent** runs, shown so you can see what it is doing:
 
 ```bash
 D=scripts/slack_driver.py
 
-py -3 $D login                       # once, in a visible window: you sign in
+py -3 $D login                       # once, in a window: you sign in, the agent waits
 py -3 $D send --email someone@cn.ibm.com --text-file body.txt
-py -3 $D --headless whoami           # from now on, headless is fine
+py -3 $D --headless whoami           # headless from here on, no window
 py -3 $D --headless serve            # one boot, then JSON commands on stdin
 ```
-
-**First run is attended, every run after that is not.** `login` opens a Chromium window and waits
-while you sign in with SSO (and whatever verification that asks for); the session is then stored in
-the profile. From then on `--headless` works, because the browser is only re-opening the session,
-not authenticating. Sign in again only when `whoami` exits 3 (`signed_in: false`).
 
 `serve` accepts one JSON object per line:
 
