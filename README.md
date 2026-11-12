@@ -1,11 +1,14 @@
 # slack_web_skill
 
-**The solution for when the official Slack API skill or an MCP server is not permitted.**
+**Slack messages, where the official Slack API skill and MCP servers are not permitted.**
 
-It sends and reads Slack messages through the Slack web UI: a Chromium window signed in with the
-user's own SSO session, driving `app.slack.com`. No API token, no bot user, no webhook, no app
-registration — nothing that needs an exception from IT, because nothing new is authorised: the agent
-acts as the user already does.
+That path is closed: the official integration has to be authorised into the workspace and hold a
+token, and where it is not permitted there is no token to obtain. Asking for one is not a step on the
+way — it is the thing that is disallowed.
+
+What is left is the web UI, which is what this drives: `app.slack.com` in Chromium, with the user's
+own SSO session. It sends and reads as the user already does — no API token, no bot user, no webhook,
+no app registration, nothing new to authorise.
 
 Config, browser profile and diagnostics live in a directory of the skill's own, so it runs standalone
 and needs no host project around it.
