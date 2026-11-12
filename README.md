@@ -5,8 +5,10 @@ Slack through a real browser session — for agents that have no Slack app token
 It talks to Slack only as a human would: a Chromium window signed in with the user's SSO
 session, driving the workspace entry (IBM's is `ibm.enterprise.slack.com`, which redirects into
 `app.slack.com`). There is no API token, no bot user, no webhook. The skill keeps its own state
-— config, profile — in `%LOCALAPPDATA%\slack-browser-skill\`, so it runs standalone and needs
-no host project around it.
+— config, profile — under a per-user directory of its own (`%LOCALAPPDATA%\slack-browser-skill\`
+on Windows, `~/Library/Application Support/slack-browser-skill/` on macOS,
+`$XDG_DATA_HOME/slack-browser-skill/` on Linux), so it runs standalone and needs no host project
+around it.
 
 This is **not** the official Slack skill. Anything named "slack" that offers ``chat.postMessage``
 and friends is a different thing; this one exists because that path is not available here.
@@ -35,12 +37,33 @@ and friends is a different thing; this one exists because that path is not avail
 ```bash
 D=scripts/slack_driver.py
 
-py -3 $D login                       # visible window, IBM SSO, ~30 s
+py -3 $D login                       # visible window, workspace SSO, ~30 s
 py -3 $D whoami                      # {"action":"whoami","signed_in":true,...}
 py -3 $D send --email someone@cn.ibm.com --text-file body.txt
 py -3 $D serve                       # one boot, then JSON commands on stdin
 ```
 
+## Configuration
+
+The defaults are the IBM workspace. On another workspace, copy the template to the state directory and edit it:
+
+```bash
+mkdir -p ~/.local/share/slack-browser-skill          # or the equivalent on your OS
+cp config.example.json ~/.local/share/slack-browser-skill/config.json
+```
+
+```json
+{
+  "team": "your-workspace",
+  "login_url": "https://your-workspace.slack.com/"
+}
+```
+
+`team` is the id in `app.slack.com/client/<TEAM>`; `login_url` is the page the sign-in starts on.
+
+For a standalone workspace both values are the subdomain; on an Enterprise Grid org the login host is `<org>.enterprise.slack.com` while the team id stays the client id. Every key is optional and every key has an env-var twin (`SLACK_SKILL_TEAM`, `SLACK_SKILL_LOGIN_URL`, …), with **env var > config file > default**; `SLACK_SKILL_HOME` moves the whole state directory, and a *relative* value keeps it inside the checkout (`SLACK_SKILL_HOME=.state`) — `config.json`, `.state/` and `profile/` are gitignored, so that never publishes a machine's settings or its cookies.
+
+`SKILL.md` has the full table, the failure modes, and the first-run checklist.
 `serve` accepts one JSON object per line:
 
 ```text
