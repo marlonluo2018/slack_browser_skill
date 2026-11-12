@@ -1,9 +1,11 @@
 # slack_web_skill
 
-**Read this first: use this skill only if your company does not allow a Slack app or a stored bot
-token.** Many do not — that is the whole reason this exists. If yours does allow it, an API-based
-skill is faster, sturdier and the better tool; this one is the fallback for environments where the
-API route is closed by policy.
+**Read this first: use this skill only if using the official Slack API integrations is not
+permitted where you work.** This is about the *integration*, not about Slack: the company runs Slack,
+and may well run its own Slack apps. What some environments do not permit is wiring an outside agent
+to the workspace through the official Slack API skill or an MCP integration. If that is allowed for
+you, use it — it is faster, sturdier and the better tool. This skill is the fallback for when it is
+not.
 
 Slack through a real browser session — for agents that have no Slack app token.
 
@@ -14,14 +16,14 @@ config, profile and diagnostics live in a directory of the skill's own (see Conf
 
 ## Why this exists
 
-The normal way for software to talk to Slack is a Slack app: register it in the workspace, get a
-bot token, call `chat.postMessage`.
+The normal way for an agent to talk to Slack is an API integration: the official Slack skill or an
+MCP server, authorised into the workspace, holding a token, calling `chat.postMessage` and friends.
 
-**In some companies that route is not permitted at all.** Corporate IT security policy can forbid
-Slack app registrations and stored bot/user tokens outright. Where that applies, this is not a missing
-approval that could be requested — it is a prohibition, and treating it as a to-do item leads people
-to look for a token, an app, or another way to hold credentials. That is not a technical shortcut; it
-is a policy breach. The skill assumes that constraint rather than fighting it.
+**Slack itself is not the problem here.** The workspace is in daily use and the company runs its own
+Slack apps; what some environments do not permit is connecting an *outside* agent to the workspace
+through those official integrations. Where that applies, this is not a missing approval to chase — the
+decision has been made, and the thing to avoid is finding another way to hold the user's credentials.
+That is a policy breach, not a shortcut. So the skill assumes the constraint instead of fighting it.
 
 So this skill uses the one channel a person is already entitled to: **the same one a human uses.** A
 Chromium window signed in with the user's own SSO session, driving the web UI. No app, no bot user, no
@@ -43,10 +45,10 @@ What it costs, stated plainly:
 - **it is a UI scraper, so Slack can break it** — the driver locates controls by role and
   `aria-label` rather than class names for this reason, but a redesign can still break a command.
 
-Those costs are why this is a fallback: the API route is closed by policy, not by an approval nobody
-has got round to filing. If the policy where you work ever changes, an API-based skill is the better
-tool and this one should retire. Until then this is the route that stays within the rules, and the
-costs above are the price of staying within them.
+Those costs are why this is a fallback: the API integration is ruled out by policy, not by an approval
+nobody has got round to filing. If that changes where you work, use an API-based skill and retire this
+one. Until then this is the route that stays within the rules, and the costs above are the price of
+staying within them.
 
 This is **not** the official Slack skill. Anything named "slack" that offers `chat.postMessage`
 and friends is a different thing, and a better one wherever policy allows it.

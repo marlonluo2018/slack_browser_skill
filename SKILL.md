@@ -8,9 +8,9 @@ triggers: [
 operations: ["send-dm", "send-channel", "find-person", "read-thread", "delete-message"]
 ---
 
-# Slack (browser)
+# Slack (web UI, browser session)
 
-Some companies forbid a Slack app registration and a stored bot/user token by IT security policy. Where that applies there is nothing to request and nothing to wait for — the browser session is the only permitted channel, and looking for a token or another way to hold credentials is a policy breach, not a shortcut.
+Some environments do not permit an outside agent to reach Slack through the official API skill or an MCP integration — not because Slack is unavailable (the workspace is in daily use, and the company runs its own Slack apps), but because that integration is not allowed. Where that applies there is nothing to request and nothing to wait for: the browser session is the only permitted channel, and looking for a token or another way to hold credentials is a policy breach, not a shortcut.
 
 Drives Slack web (`ibm.enterprise.slack.com` is the default entry here, which redirects into `app.slack.com`) in a real browser using the user's own SSO session.
 
