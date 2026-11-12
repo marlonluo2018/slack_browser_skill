@@ -10,7 +10,7 @@ operations: ["send-dm", "send-channel", "find-person", "read-thread", "delete-me
 
 # Slack (web UI, browser session)
 
-Company IT policy can forbid an outside agent reaching Slack through the official API skill or an MCP integration — not because Slack is unavailable (the workspace is in daily use, and the company runs its own Slack apps), but because that integration is banned. Where it is banned there is nothing to request and nothing to wait for: the browser session is the only permitted channel, and looking for a token or another way to hold credentials is a policy breach, not a shortcut.
+Company IT policy can forbid an outside agent reaching Slack through the official API skill or an MCP integration. Where it is banned, the browser session below is the route this skill takes.
 
 Drives Slack web (`ibm.enterprise.slack.com` is the default entry here, which redirects into `app.slack.com`) in a real browser using the user's own SSO session.
 

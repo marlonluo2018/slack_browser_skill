@@ -3,13 +3,9 @@
 **The solution for Slack messages in a company whose IT policy does not permit the official Slack API
 skill or an MCP integration.**
 
-That path is forbidden by company IT policy, so it is not an approval still to be obtained: the
-official integration would have to be authorised into the workspace and hold a token, and that is what
-is banned. Asking for a token is not a step on the way — it is the thing that is forbidden.
-
-What is left is the web UI, which is what this drives: `app.slack.com` in Chromium, with the user's
-own SSO session. It sends and reads as the user already does — no API token, no bot user, no webhook,
-no app registration, nothing new to authorise.
+Instead, this drives the web UI: `app.slack.com` in Chromium, with the user's own SSO session. It
+sends and reads Slack messages as the user does — no API token, no bot user, no webhook, no app
+registration.
 
 Config, browser profile and diagnostics live in a directory of the skill's own, so it runs standalone
 and needs no host project around it.
