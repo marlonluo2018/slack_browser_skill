@@ -10,12 +10,17 @@ config, profile and diagnostics live in a directory of the skill's own (see Conf
 ## Why this exists
 
 The normal way for software to talk to Slack is a Slack app: register it in the workspace, get a
-bot token, call `chat.postMessage`. That route needs two things this environment does not have —
-an app approved by the workspace administrator, and a token that then has to be stored somewhere.
+bot token, call `chat.postMessage`.
 
-So this skill takes the only channel that is left: **the same one a human uses.** A Chromium window
-signed in with the user's own SSO session, driving the web UI. No app, no bot user, no webhook, no
-token to leak — and nothing to ask an administrator for.
+**That route is not permitted here.** IBM IT security policy does not allow a Slack app registration
+or a stored bot/user token, so this is not a missing approval that could be requested — it is a
+prohibition that applies. Treat it that way: do not go looking for a token, an app, or another way to
+hold the user's credentials. Working around that control is not a technical shortcut, it is a
+policy breach.
+
+So this skill uses the one channel a person is already entitled to: **the same one a human uses.** A
+Chromium window signed in with the user's own SSO session, driving the web UI. No app, no bot user, no
+webhook, no token to store — nothing that needs a new grant, and nothing policy has to approve.
 
 What that buys:
 
@@ -33,11 +38,13 @@ What it costs, stated plainly:
 - **it is a UI scraper, so Slack can break it** — the driver locates controls by role and
   `aria-label` rather than class names for this reason, but a redesign can still break a command.
 
-Those costs are why this is a **fallback, not a replacement**. If a Slack app token ever becomes
-available, use it and retire this skill. Until then, this is the one that works.
+Those costs are why this is a **fallback whose time may not end**: the API route is closed by
+policy, not by an approval nobody has got round to filing. If that policy ever changes, an API-based
+skill is the better tool and this one should retire. Until then this is the only route that stays
+within the rules, and the costs above are the price of staying within them.
 
 This is **not** the official Slack skill. Anything named "slack" that offers `chat.postMessage`
-and friends is a different thing, and it is the better thing when it can be installed.
+and friends is a different thing, and a better one wherever policy allows it.
 
 ## What it does
 
