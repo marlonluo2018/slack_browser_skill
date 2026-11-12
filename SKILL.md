@@ -24,6 +24,18 @@ An outgoing Slack message is an outgoing message: same rule as email — **never
 
 The in-app browser (section "Fallback: ZCode in-app browser" at the end) exists only for the case where the driver cannot run — Python/Playwright missing, profile locked by someone else, or Slack refusing the driver's Chromium. Do not reach for it first, and do not keep two live paths "just in case": two paths is how the same message gets sent twice or typed into a public channel.
 
+## First run on a new machine
+
+The stored profile is what keeps the session, so this happens once per machine — and again only if the session actually dies (see "When the session expires").
+
+1. `py -3 -m pip install playwright` and `py -3 -m playwright install chromium`. Once per machine.
+2. `py -3 $D login` from the **interactive desktop session**, never a sandboxed/background shell — a headed Chromium started there dies immediately and every later call fails with `TargetClosedError` (same reason as the resident-mode note below). A Chromium window opens; **the user signs in with IBM SSO in it**. Never ask for, type or store the credentials.
+3. `login` polls for the app to reach `/client/…` and gives up after `BRAINCLAW_LOGIN_WAIT` seconds — **default 300**. If SSO plus MFA needs longer, set it before running (`$env:BRAINCLAW_LOGIN_WAIT=600`). On timeout the command reports `ok: false` and closes the window: a sign-in still in progress is lost. If the SSO had already completed, the cookies are saved anyway — run `whoami` to find out instead of signing in again blindly.
+4. `py -3 $D whoami` → `signed_in: true` means the profile holds the session (exit 3 = a human must sign in).
+5. Prove the whole path on the safe target: send a dummy to your own DM and `read` it back. Nothing reaches a colleague, and it exercises resolution, composer, send and verification in one go.
+
+The session lives in `%LOCALAPPDATA%\BrainClaw\slack-profile`, not in a running browser, so closing the window after a successful login keeps it. Env overrides, all optional: `BRAINCLAW_SLACK_PROFILE` (profile directory), `BRAINCLAW_SLACK_TEAM` (workspace id, default `E27SFGS2W` — the IBM workspace), `BRAINCLAW_SLACK_BOOT_MS` (default 15000; raise it on a slow link).
+
 ## Driver usage
 
 Requires `playwright` (`py -3 -m pip install playwright`) and a Chromium build (`py -3 -m playwright install chromium`).
