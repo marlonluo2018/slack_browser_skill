@@ -10,9 +10,11 @@ operations: ["send-dm", "send-channel", "find-person", "read-thread", "delete-me
 
 # Slack (browser)
 
-Drives Slack web (`ibm.enterprise.slack.com`, which redirects into `app.slack.com`) in a real browser using the user's own SSO session. IBM IT security policy forbids a Slack app registration and a stored bot/user token, so there is nothing here to request or wait for: the browser session below is the only permitted channel, and looking for a token or another way to hold credentials is a policy breach, not a shortcut.
+Some companies forbid a Slack app registration and a stored bot/user token by IT security policy. Where that applies there is nothing to request and nothing to wait for — the browser session is the only permitted channel, and looking for a token or another way to hold credentials is a policy breach, not a shortcut.
 
-This skill has no Slack API integration and no app token — a logged-in browser is the only send channel, which is why this skill is named **browser** and lives apart from anything that talks to the Slack API.
+Drives Slack web (`ibm.enterprise.slack.com` is the default entry here, which redirects into `app.slack.com`) in a real browser using the user's own SSO session.
+
+This skill has no Slack API integration and no app token — a logged-in browser is the only send channel, which is why it drives the web UI and lives apart from anything that talks to the Slack API.
 
 One implementation does the work: `scripts/slack_driver.py`. An in-app-browser fallback is documented at the end, for when the driver cannot run.
 

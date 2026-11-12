@@ -1,5 +1,10 @@
 # slack_web_skill
 
+**Read this first: use this skill only if your company does not allow a Slack app or a stored bot
+token.** Many do not — that is the whole reason this exists. If yours does allow it, an API-based
+skill is faster, sturdier and the better tool; this one is the fallback for environments where the
+API route is closed by policy.
+
 Slack through a real browser session — for agents that have no Slack app token.
 
 It talks to Slack only as a human would: a Chromium window signed in with the user's SSO session,
@@ -12,11 +17,11 @@ config, profile and diagnostics live in a directory of the skill's own (see Conf
 The normal way for software to talk to Slack is a Slack app: register it in the workspace, get a
 bot token, call `chat.postMessage`.
 
-**That route is not permitted here.** IBM IT security policy does not allow a Slack app registration
-or a stored bot/user token, so this is not a missing approval that could be requested — it is a
-prohibition that applies. Treat it that way: do not go looking for a token, an app, or another way to
-hold the user's credentials. Working around that control is not a technical shortcut, it is a
-policy breach.
+**In some companies that route is not permitted at all.** Corporate IT security policy can forbid
+Slack app registrations and stored bot/user tokens outright. Where that applies, this is not a missing
+approval that could be requested — it is a prohibition, and treating it as a to-do item leads people
+to look for a token, an app, or another way to hold credentials. That is not a technical shortcut; it
+is a policy breach. The skill assumes that constraint rather than fighting it.
 
 So this skill uses the one channel a person is already entitled to: **the same one a human uses.** A
 Chromium window signed in with the user's own SSO session, driving the web UI. No app, no bot user, no
@@ -38,10 +43,10 @@ What it costs, stated plainly:
 - **it is a UI scraper, so Slack can break it** — the driver locates controls by role and
   `aria-label` rather than class names for this reason, but a redesign can still break a command.
 
-Those costs are why this is a **fallback whose time may not end**: the API route is closed by
-policy, not by an approval nobody has got round to filing. If that policy ever changes, an API-based
-skill is the better tool and this one should retire. Until then this is the only route that stays
-within the rules, and the costs above are the price of staying within them.
+Those costs are why this is a fallback: the API route is closed by policy, not by an approval nobody
+has got round to filing. If the policy where you work ever changes, an API-based skill is the better
+tool and this one should retire. Until then this is the route that stays within the rules, and the
+costs above are the price of staying within them.
 
 This is **not** the official Slack skill. Anything named "slack" that offers `chat.postMessage`
 and friends is a different thing, and a better one wherever policy allows it.
