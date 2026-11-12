@@ -35,7 +35,7 @@ The stored profile is what keeps the session, so this happens once per machine �
 
    Off the IBM workspace, pass the entry once: `login --url https://<your-workspace>.slack.com/` (at a terminal, `login --ask` prompts for it).
 
-   **If the SSO wants a passkey**, set `browser_channel` to an installed browser (`msedge`, `chrome`): passkeys and Windows Hello reach the OS through the browser, and whether Playwright's bundled Chromium build exposes that authenticator is unverified (2026-11-12). The profile is browser-agnostic, so switching channel keeps the session. On success the driver reads the workspace id from the URL and saves `team` + `login_url` into `config.json`, so the one fact a user cannot know up front never has to be typed: `{"ok": true, "team": "T0123456", "saved": true}`.
+   **A passkey is typed by the user in that window, like any other credential** — the open question is only whether this browser build *offers* a platform authenticator at all. If the prompt never appears, set `browser_channel` to an installed browser (`msedge`, `chrome`) and repeat; unverified here (2026-11-12), since neither a passkey-enrolled account nor a second workspace was available. The profile is browser-agnostic, so switching channel keeps the session. On success the driver reads the workspace id from the URL and saves `team` + `login_url` into `config.json`, so the one fact a user cannot know up front never has to be typed: `{"ok": true, "team": "T0123456", "saved": true}`.
 3. `login` polls for the app to reach `/client/…` and gives up after `login_wait` seconds — **default 300**. If SSO plus MFA needs longer, set it before running (`$env:SLACK_SKILL_LOGIN_WAIT=600`, or `login_wait` in the config file). On timeout the command reports `ok: false` and closes the window: a sign-in still in progress is lost. If the SSO had already completed, the cookies are saved anyway — run `whoami` to find out instead of signing in again blindly.
 4. `py -3 $D whoami` → `signed_in: true` means the profile holds the session (exit 3 = a human must sign in).
 5. Prove the whole path on the safe target: send a dummy to your own DM and `read` it back. Nothing reaches a colleague, and it exercises resolution, composer, send and verification in one go.
@@ -66,6 +66,26 @@ With three possible data homes the driver never makes you guess: `whoami` report
 
 The session lives in the profile directory, not in a running browser, so closing the window after a successful login keeps it. A profile left at an older, host-owned path (BrainClaw's `slack-profile`) is moved once on first use, so the cookies — and the login — survive the move.
 
+### Handing the sign-in to the user (what the agent actually does)
+
+`login` is a conversation, not a single blocking call: the agent opens the window and then **waits for a human**, who may take minutes (email, password, MFA, a passkey prompt, a phone tap). Run it as a background job so the turn does not die at the tool timeout, and verify afterwards — never type credentials, and never assume a timeout means failure.
+
+```text
+1. start it, do not block on it
+   py -3 scripts/slack_driver.py login --ask      (background job; login_wait 300 s default)
+2. tell the user: the window is open, sign in there, say when done
+3. when they say done, read the job output
+   {"ok": true, "team": "...", "saved": true}   -> done, and the workspace id is now configured
+   still running  -> the poll has not seen /client/ yet; give it a moment, then read again
+   {"ok": false}  -> the wait expired; the cookies are still saved if the SSO finished, so
+                     run whoami before asking for another sign-in
+4. independent proof, once the job has exited
+   py -3 scripts/slack_driver.py whoami           -> signed_in: true, profile: <path>
+```
+
+`whoami` cannot be the check while `login` is still running: one browser per profile, so the second process would fail with "profile is already in use" rather than an honest answer. Verify after the job exits — the profile is on disk, not in the browser, so closing the window does not lose it.
+
+If the sign-in needs a passkey and the window does not offer one, set `browser_channel` to an installed browser (`msedge`, `chrome`) and repeat: that is the only part of this flow that has not been verified here.
 ### Settings — config file, env vars, defaults
 
 `config.json` is read at startup; the table below lists every key.

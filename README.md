@@ -54,7 +54,7 @@ py -3 scripts/slack_driver.py login --url https://your-workspace.slack.com/
 
 `login` needs a visible window — the credentials and any passkey are typed by a human, so `--headless` cannot sign in (it refuses immediately rather than waiting). At a terminal `login --ask` prompts for the URL; an agent passes `--url`, so nothing is ever typed into a prompt nobody can answer.
 
-If your SSO offers a passkey, set `"browser_channel": "msedge"` (or `chrome`) to sign in through an installed browser, which has the platform authenticator; Playwright's bundled Chromium has not been verified to expose it.
+A passkey is entered by the user in that window like any other credential; if the prompt does not appear at all, set `"browser_channel": "msedge"` (or `chrome`) to sign in through an installed browser, which has the platform authenticator. Playwright's bundled Chromium has not been verified either way. When `login` runs as a background job, verify it with `whoami` after it exits — one browser per profile.
 
 The only thing you supply is *where to sign in*. On the IBM workspace there is nothing to supply at all: `login` uses the built-in default and saves what it finds.
 
