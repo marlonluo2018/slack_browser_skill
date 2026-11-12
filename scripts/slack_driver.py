@@ -50,23 +50,48 @@ DEFAULT_TIMEOUT_MS = 20_000
 # SLACK_SKILL_* is the current env prefix; the first spelling, BRAINCLAW_SLACK_*,
 # is still accepted as an alias so an existing setup keeps working.
 HOME_NAME = "slack-browser-skill"
+# The skill's own directory -- the root for a relative state override.
+SKILL_ROOT = Path(__file__).resolve().parents[1]
+
+
+def _data_base(platform: str, env) -> Path:
+    """The per-user data directory this platform actually uses.
+
+    Three conventions, not two. Windows keeps per-user app data in
+    %LOCALAPPDATA%, macOS in ~/Library/Application Support, and Linux/BSD
+    follow XDG. Treating "not Windows" as "Linux" runs on a Mac but scatters
+    state into ~/.local/share, which is not where a Mac user, a backup tool or
+    a cleaner looks.
+    """
+    if platform == "nt":
+        return Path(env.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
+    if platform == "darwin":
+        return Path.home() / "Library" / "Application Support"
+    return Path(env.get("XDG_DATA_HOME") or Path.home() / ".local" / "share")
+
+
+def _resolve(value: str) -> Path:
+    """An override path: absolute as given, relative to the skill directory.
+
+    Relative is the portable form -- `SLACK_SKILL_HOME=.state` keeps every byte
+    inside the checkout (self-contained copy, easy to move between machines),
+    and it is the same string on Windows and macOS.
+    """
+    path = Path(value).expanduser()
+    return path if path.is_absolute() else (SKILL_ROOT / path)
 
 
 def skill_home() -> Path:
     """Where this skill keeps its own state: config, profile, diagnostics."""
     override = os.environ.get("SLACK_SKILL_HOME") or os.environ.get("BRAINCLAW_SLACK_HOME")
     if override:
-        return Path(override).expanduser()
-    if os.name == "nt":
-        base = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
-    else:
-        base = Path.home() / ".local" / "share"
-    return base / HOME_NAME
+        return _resolve(override)
+    return _data_base(os.name, os.environ) / HOME_NAME
 
 
 def config_path() -> Path:
     override = os.environ.get("SLACK_SKILL_CONFIG") or os.environ.get("BRAINCLAW_SLACK_CONFIG")
-    return Path(override).expanduser() if override else skill_home() / "config.json"
+    return _resolve(override) if override else skill_home() / "config.json"
 
 
 _CONFIG: dict | None = None
@@ -123,7 +148,12 @@ BOOT_MS = int(setting(("SLACK_SKILL_BOOT_MS", "BRAINCLAW_SLACK_BOOT_MS"), "boot_
 
 
 def _legacy_profile_dir() -> Path:
-    """Where the profile lived when a harness owned the path (BrainClaw)."""
+    """Where the profile lived when a harness owned the path (BrainClaw).
+
+    Deliberately not routed through _data_base: this must reproduce the old
+    logic exactly, including the mistake of using the Linux path on a Mac, or
+    an existing profile would not be found and the session would look dead.
+    """
     if os.name == "nt":
         base = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
         return base / "BrainClaw" / "slack-profile"
@@ -140,7 +170,7 @@ def profile_dir() -> Path:
     """
     override = setting(("SLACK_SKILL_PROFILE", "BRAINCLAW_SLACK_PROFILE"), "profile", "")
     if override:
-        return Path(str(override)).expanduser()
+        return _resolve(str(override))
     target = skill_home() / "profile"
     if not target.exists():
         legacy = _legacy_profile_dir()

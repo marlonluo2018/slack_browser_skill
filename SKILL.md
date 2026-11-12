@@ -39,12 +39,19 @@ The stored profile is what keeps the session, so this happens once per machine �
 The driver is its own repo, so it owns its own state — nothing is stored under a host's directory, and no host has to exist for it to run. Everything sits in one directory:
 
 ```text
-%LOCALAPPDATA%\slack-browser-skill\            (Windows)
-~/.local/share/slack-browser-skill/            (elsewhere)
-  config.json      settings (below)
-  profile/         the signed-in Chromium profile — this is the session
+%LOCALAPPDATA%\slack-browser-skill\                     Windows
+~/Library/Application Support/slack-browser-skill/      macOS
+$XDG_DATA_HOME/slack-browser-skill/                     Linux/BSD
+  (XDG_DATA_HOME defaults to ~/.local/share)
+
+  config.json          settings (below)
+  profile/             the signed-in Chromium profile — this is the session
   slack-diagnose.png   last `diagnose` screenshot
 ```
+
+Three platform conventions, not two: the first version treated "not Windows" as "Linux", which runs on a Mac but scatters state into `~/.local/share` where no Mac user, backup tool or cleaner looks.
+
+**Why not inside the checkout?** Because of what is in there: a ~460 MB browser profile whose cookies *are* the login. Inside a git working tree that is one `.gitignore` edit, `git add -f` or "zip the folder and share it" away from publishing a live session, and a `git clean -xdf` or a fresh clone silently logs you out. (`outlook_com_skill` does keep `.outlook-skill/` in-repo for standalone runs — the difference is that its state is cache and paths, not credentials.) If you still want a self-contained copy — a USB stick, a throwaway VM — set `SLACK_SKILL_HOME=.state`: a **relative** value resolves against the skill directory, and it is the same string on Windows and macOS. An absolute value is used as given.
 
 The session lives in `profile/`, not in a running browser, so closing the window after a successful login keeps it. A profile left at an older, host-owned path (BrainClaw's `slack-profile`) is moved here once on first use, so the cookies — and the login — survive the move.
 
@@ -70,7 +77,7 @@ Every key is optional, every key has an env-var twin, and precedence is **env va
 | `boot_ms` | `SLACK_SKILL_BOOT_MS` | `15000` (raise it on a slow link) |
 | `login_wait` | `SLACK_SKILL_LOGIN_WAIT` | `300` |
 
-Two more, which have no config key because they locate the file itself: `SLACK_SKILL_HOME` (the directory above) and `SLACK_SKILL_CONFIG` (a different config file).
+Two more, which have no config key because they locate the file itself: `SLACK_SKILL_HOME` (the directory above — absolute, or relative to the skill directory) and `SLACK_SKILL_CONFIG` (a different config file).
 
 The first spelling of these variables, `BRAINCLAW_SLACK_*` (and `BRAINCLAW_LOGIN_WAIT`), is still honoured as an alias — the `SLACK_SKILL_*` name wins when both are set.
 
