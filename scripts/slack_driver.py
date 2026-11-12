@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Slack web driver that does not depend on any agent harness.
 
-Portable backend for the slack_browser_skill: works with Claude Code, DeepSeek or any
+Portable backend for the slack_web_skill: works with Claude Code, DeepSeek or any
 harness that can run `py -3` / `python3`. It drives app.slack.com with
 Playwright using a persistent browser profile, so the IBM SSO session is
 reused after a one-time `login`.
@@ -44,12 +44,17 @@ DEFAULT_TIMEOUT_MS = 20_000
 # it, which is useless for a second terminal or a scheduled run — and an env
 # var still wins, so a one-off override never needs a file edit.
 #
-#   %LOCALAPPDATA%\slack-browser-skill\config.json   (Windows)
-#   ~/.local/share/slack-browser-skill/config.json   (elsewhere)
+#   %LOCALAPPDATA%\slack-web-skill\config.json   (Windows)
+#   ~/.local/share/slack-web-skill/config.json   (elsewhere)
 #
 # SLACK_SKILL_* is the current env prefix; the first spelling, BRAINCLAW_SLACK_*,
 # is still accepted as an alias so an existing setup keeps working.
-HOME_NAME = "slack-browser-skill"
+HOME_NAME = "slack-web-skill"
+# The skill used to be slack_browser_skill and its state directory carried that
+# name. That directory holds the signed-in Chromium profile, so a rename without
+# moving it would read as "signed out" on the next run: move it once, and fall
+# back to the old path if the move is what fails.
+LEGACY_HOME_NAMES = ("slack-browser-skill",)
 # The skill's own directory -- the root for a relative state override.
 SKILL_ROOT = Path(__file__).resolve().parents[1]
 
@@ -101,7 +106,20 @@ def skill_home() -> Path:
     portable = SKILL_ROOT / PORTABLE_DIR
     if portable.is_dir():
         return portable
-    return _data_base(os.name, os.environ) / HOME_NAME
+    base = _data_base(os.name, os.environ)
+    target = base / HOME_NAME
+    if not target.exists():
+        for legacy_name in LEGACY_HOME_NAMES:
+            legacy = base / legacy_name
+            if legacy.exists():
+                try:
+                    os.replace(legacy, target)
+                    print(f"moved the Slack state directory: {legacy} -> {target}", file=sys.stderr)
+                except OSError as exc:
+                    print(f"could not move {legacy} ({exc}); using it in place", file=sys.stderr)
+                    return legacy
+                break
+    return target
 
 
 def config_path() -> Path:

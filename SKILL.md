@@ -1,5 +1,5 @@
 ---
-name: slack_browser_skill
+name: slack_web_skill
 description: Slack through a real browser session — send DMs/messages, read a conversation, delete a message you just sent, from any agent harness (ZCode, Claude Code, DeepSeek, plain shell) via the bundled Playwright driver. Use when the user asks to send or check something on IBM Slack, "Slack 提醒一下", "发个 Slack", "在 Slack 上说". Not the official Slack API/app skill — this one drives ibm.enterprise.slack.com with the user's own logged-in session.
 triggers: [
   "send a slack", "slack message", "slack dm", "slack 一下", "slack 提醒", "发 slack",
@@ -20,7 +20,7 @@ An outgoing Slack message is an outgoing message: same rule as email — **never
 
 ## One path: `slack_driver.py`
 
-**Use `scripts/slack_driver.py` (from the skill directory) for every Slack send, read and delete — in every harness and in every host.** Under BrainClaw that is `assistant_brain/skills/slack_browser_skill/scripts/slack_driver.py`. One implementation, one set of behaviours, one place to fix. It needs only `py -3` + Playwright and its own signed-in profile; it makes no assumption about the host's browser tooling, so Claude Code, DeepSeek and ZCode run the identical code.
+**Use `scripts/slack_driver.py` (from the skill directory) for every Slack send, read and delete — in every harness and in every host.** Under BrainClaw that is `assistant_brain/skills/slack_web_skill/scripts/slack_driver.py`. One implementation, one set of behaviours, one place to fix. It needs only `py -3` + Playwright and its own signed-in profile; it makes no assumption about the host's browser tooling, so Claude Code, DeepSeek and ZCode run the identical code.
 
 The in-app browser (section "Fallback: ZCode in-app browser" at the end) exists only for the case where the driver cannot run — Python/Playwright missing, profile locked by someone else, or Slack refusing the driver's Chromium. Do not reach for it first, and do not keep two live paths "just in case": two paths is how the same message gets sent twice or typed into a public channel.
 
@@ -48,9 +48,9 @@ The driver is its own repo, so it owns its own state and needs no host around it
 <skill>/config.json          settings — with the code, and gitignored
 <skill>/config.example.json  the template that ships
 
-%LOCALAPPDATA%\slack-browser-skill\profile\               Windows
-~/Library/Application Support/slack-browser-skill/profile/  macOS
-$XDG_DATA_HOME/slack-browser-skill/profile/                 Linux/BSD
+%LOCALAPPDATA%\slack-web-skill\profile\               Windows
+~/Library/Application Support/slack-web-skill/profile/  macOS
+$XDG_DATA_HOME/slack-web-skill/profile/                 Linux/BSD
   (XDG_DATA_HOME defaults to ~/.local/share; slack-diagnose.png sits beside profile/)
 ```
 
@@ -152,7 +152,7 @@ For a standalone workspace both values are the subdomain; for an Enterprise Grid
 Requires `playwright` (`py -3 -m pip install playwright`) and a Chromium build (`py -3 -m playwright install chromium`).
 
 ```bash
-D=assistant_brain/skills/slack_browser_skill/scripts/slack_driver.py
+D=assistant_brain/skills/slack_web_skill/scripts/slack_driver.py
 
 # one-time: opens a visible window, sign in with IBM SSO, session is kept in the profile
 py -3 $D login
@@ -179,7 +179,7 @@ py -3 $D find --query someone@cn.ibm.com
 py -3 $D send-batch --file outbox/slack-batch.json
 
 # delete messages you just sent (verification / cleanup)
-py -3 assistant_brain/skills/slack_browser_skill/scripts/slack_driver.py delete \
+py -3 assistant_brain/skills/slack_web_skill/scripts/slack_driver.py delete \
   --email someone@cn.ibm.com --match "zcode test"
 
 # resident mode: one browser, many commands (see below)
@@ -280,7 +280,7 @@ Behaviour that matters:
 - `delete` hovers the matching row, opens **More actions → Delete message…**, confirms the dialog and reports `{matched, deleted, remaining, reason}`. **The hover toolbar is flaky**: a single `hover()` + 600 ms wait regularly produced `More actions` count 0 and a silent `deleted: 0` (2026-11-10), while an identical manual hover worked. The driver therefore retries the hover up to 4 times (~1.2 s each, offset `position={x:40,y:10}` inside the row) before giving up. `reason` says where it stopped — `deleted-all`, `hover-toolbar-never-appeared`, `delete-menuitem-missing`, `confirm-dialog-missing`, `message-still-present-after-confirm` — so a failure is diagnosable from the JSON alone.
 - **"Signed out" almost always means a stray overlay, not a dead session.** Symptom: every command exits with `not signed in`, yet the profile worked minutes earlier; a manual look shows the app on a DM with a full sidebar. Cause (verified 2026-11-11, screenshot + HTTP log): an open **Ctrl+K quick switcher** or **New message pane** marks the rest of the app `aria-hidden`, so `get_by_role("treeitem")` / `searchbox` / `New message` all return **0** while the UI is visibly fine. `dismiss_overlays()` presses `Escape` (up to twice) before every sign-in check and at the start of `open_dm`, and that turned the false negative into `signed_in: true`.
 - **Do not call it throttling without evidence.** The same symptom was first blamed on Slack rate-limiting. `diagnose` disproved it in 45 s: `http_errors: []`, 98 API calls at normal status, `bodyLen: 3751`, a correct page title — a perfectly healthy page with a modal over it. Run `diagnose` before inventing a server-side explanation.
-- **`diagnose` is the tool for "Slack looks broken".** `py -3 $D diagnose --seconds 45` prints HTTP statuses ≥400, the count of API calls, console errors, and a render timeline (title / body length / sidebar counts every 5 s), and writes a screenshot to the skill home (`%LOCALAPPDATA%\slack-browser-skill\slack-diagnose.png` on Windows). Read the screenshot before touching the code.
+- **`diagnose` is the tool for "Slack looks broken".** `py -3 $D diagnose --seconds 45` prints HTTP statuses ≥400, the count of API calls, console errors, and a render timeline (title / body length / sidebar counts every 5 s), and writes a screenshot to the skill home (`%LOCALAPPDATA%\slack-web-skill\slack-diagnose.png` on Windows). Read the screenshot before touching the code.
 - **Do not launch the visible browser from a sandboxed/background shell.** A headed Chromium started that way dies immediately and every Playwright call raises `TargetClosedError: Target has been closed`; identical code run with desktop/foreground execution opens the window and works (both reproductions on 2026-11-10). Same rule as Outlook COM in `ENVIRONMENT.md`: run `login` in the interactive desktop session.
 - The driver resolves people **by email address**. Display names collide in this workspace (two "Wei Wang"), which leaves **Send now** permanently disabled.
 
@@ -309,7 +309,7 @@ Exit code 3 means **"a human must sign in"** — distinct from 1 (usage/data pro
 
 **What the agent does on exit 3:** nothing automatic. Tell the user, in their language, that the Slack login has expired and ask them to run the login command; the browser window that opens is where they type the credentials. Never ask for, type, or store the password — the same rule as every other credential in this repo.
 
-Suggested wording: “Slack 登录已失效，需要你重新登录一次：运行 `py -3 assistant_brain/skills/slack_browser_skill/scripts/slack_driver.py login`，会弹出浏览器窗口，你在窗口里用工作区 SSO 登录即可（登完窗口可以直接关，会话会保存）。”
+Suggested wording: “Slack 登录已失效，需要你重新登录一次：运行 `py -3 assistant_brain/skills/slack_web_skill/scripts/slack_driver.py login`，会弹出浏览器窗口，你在窗口里用工作区 SSO 登录即可（登完窗口可以直接关，会话会保存）。”
 
 **Before relaying an expiry, rule out the false alarm.** A single failed probe is not evidence: `signed_in()` already retries once, and a leftover overlay produces the identical symptom. If the user insists the session should be valid, run `diagnose --seconds 45` and look at the screenshot — an open quick-switcher means the session is fine.
 

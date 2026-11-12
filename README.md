@@ -1,13 +1,13 @@
-# slack_browser_skill
+# slack_web_skill
 
 Slack through a real browser session — for agents that have no Slack app token.
 
 It talks to Slack only as a human would: a Chromium window signed in with the user's SSO
 session, driving the workspace entry (IBM's is `ibm.enterprise.slack.com`, which redirects into
 `app.slack.com`). There is no API token, no bot user, no webhook. The skill keeps its own state
-— config, profile — under a per-user directory of its own (`%LOCALAPPDATA%\slack-browser-skill\`
-on Windows, `~/Library/Application Support/slack-browser-skill/` on macOS,
-`$XDG_DATA_HOME/slack-browser-skill/` on Linux), so it runs standalone and needs no host project
+— config, profile — under a per-user directory of its own (`%LOCALAPPDATA%\slack-web-skill\`
+on Windows, `~/Library/Application Support/slack-web-skill/` on macOS,
+`$XDG_DATA_HOME/slack-web-skill/` on Linux), so it runs standalone and needs no host project
 around it.
 
 This is **not** the official Slack skill. Anything named "slack" that offers ``chat.postMessage``
@@ -75,7 +75,7 @@ What it writes is a plain file you can still edit by hand:
 
 `team` is the id in `app.slack.com/client/<TEAM>`; `login_url` is the page sign-in starts on. For a standalone workspace both values are the subdomain; on an Enterprise Grid org the login host is `<org>.enterprise.slack.com` while the team id stays the client id.
 
-`config.json` is gitignored: it sits in the checkout where you can see and edit it, but a machine's workspace never travels back into the repo. The browser profile — the session itself — lives in the per-user data directory (`%LOCALAPPDATA%\slack-browser-skill\` on Windows, `~/Library/Application Support/slack-browser-skill/` on macOS, `$XDG_DATA_HOME/slack-browser-skill/` on Linux). For a self-contained copy (USB stick, throwaway VM) create `.state/` next to `scripts/` and put the config in there instead — portable mode needs no environment variable.
+`config.json` is gitignored: it sits in the checkout where you can see and edit it, but a machine's workspace never travels back into the repo. The browser profile — the session itself — lives in the per-user data directory (`%LOCALAPPDATA%\slack-web-skill\` on Windows, `~/Library/Application Support/slack-web-skill/` on macOS, `$XDG_DATA_HOME/slack-web-skill/` on Linux). For a self-contained copy (USB stick, throwaway VM) create `.state/` next to `scripts/` and put the config in there instead — portable mode needs no environment variable.
 
 One command answers "which file am I actually using?":
 
