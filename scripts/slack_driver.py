@@ -193,6 +193,45 @@ LOGIN_URL = setting(("SLACK_SKILL_LOGIN_URL", "BRAINCLAW_SLACK_LOGIN_URL"), "log
 BOOT_MS = int(setting(("SLACK_SKILL_BOOT_MS", "BRAINCLAW_SLACK_BOOT_MS"), "boot_ms", 15000))
 
 
+def _team_from_url(url: str) -> str:
+    """The workspace id in a client URL: /client/<TEAM>/<channel>."""
+    match = re.search(r"/client/([A-Za-z0-9]+)", url or "")
+    return match.group(1) if match else ""
+
+
+def save_learned_workspace(team: str, login_url: str) -> dict:
+    """Persist what a successful sign-in just proved.
+
+    The workspace id is the one fact a user cannot reasonably know before
+    signing in — but the browser knows it the moment the sign-in lands, since
+    the URL carries it. Asking for it up front is asking the user to look up
+    something the tool can read. So login learns it and writes it down, and the
+    only thing a human has to supply is where to sign in.
+    """
+    path = config_path()
+    data = dict(config())
+    previous = data.get("team")
+    data["team"] = team
+    data["login_url"] = login_url
+    report = {"config": str(path), "team": team, "saved": False}
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        report["saved"] = True
+        # config() and the module constants are fixed at import; make the rest
+        # of this process agree with the file it just wrote, or a caller would
+        # keep using the old workspace after a successful save.
+        global _CONFIG, TEAM, LOGIN_URL
+        _CONFIG = None
+        TEAM = team
+        LOGIN_URL = login_url
+    except OSError as exc:
+        report["error"] = str(exc)
+    if previous and previous != team:
+        report["team_changed_from"] = previous
+    return report
+
+
 def _legacy_profile_dir() -> Path:
     """Where the profile lived when a harness owned the path (BrainClaw).
 
@@ -1023,7 +1062,17 @@ def main() -> int:
     parser.add_argument("--headless", action="store_true", help="run without a visible window (profile must already be signed in)")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    sub.add_parser("login", help="open a visible browser and wait for the Slack session")
+    p_login = sub.add_parser("login", help="open a visible browser and wait for the Slack session")
+    p_login.add_argument(
+        "--ask",
+        action="store_true",
+        help="prompt for the sign-in URL (opt-in: never prompt a run that cannot answer)",
+    )
+    p_login.add_argument(
+        "--url",
+        help="sign-in entry; after a successful login the workspace id is read from the URL "
+             "and saved to the config, so it never has to be typed in",
+    )
     sub.add_parser("whoami", help="report whether the stored profile is signed in")
     sub.add_parser("serve", help="resident mode: read JSON commands from stdin, one JSON reply per command")
     p_diag = sub.add_parser("diagnose", help="record HTTP statuses, console errors and render timeline")
@@ -1086,17 +1135,53 @@ def main() -> int:
                 # The workspace entry redirects into app.slack.com through SSO
                 # (IBM by default); app.slack.com directly shows the generic
                 # sign-in form instead, so never start there.
-                page.goto(LOGIN_URL, wait_until="domcontentloaded")
-                print(f"login entry: {LOGIN_URL} (workspace {TEAM})", file=sys.stderr)
-                wait_s = int(setting("BRAINCLAW_LOGIN_WAIT", "login_wait", 300))
+                entry = args.url or LOGIN_URL
+                # Prompting is opt-in (--ask). isatty() is not a safe test: it
+                # returned True in an agent sandbox whose stdin then raised
+                # EOFError, so an implicit prompt both crashed there and could
+                # hang a scheduled run forever. A flag cannot be wrong.
+                if not args.url and args.ask:
+                    try:
+                        typed = input(f"Sign-in URL [{entry}]: ").strip()
+                    except (EOFError, KeyboardInterrupt):
+                        typed = ""
+                        print("(no input available; using the configured entry)", file=sys.stderr)
+                    if typed:
+                        entry = typed
+                elif not args.url:
+                    print(f"tip: login --ask prompts for the sign-in URL; "
+                          f"--url <https://workspace.slack.com/> sets it directly "
+                          f"(currently {LOGIN_URL})", file=sys.stderr)
+                page.goto(entry, wait_until="domcontentloaded")
+                print(f"login entry: {entry} (workspace {TEAM})", file=sys.stderr)
+                wait_s = int(setting(("SLACK_SKILL_LOGIN_WAIT", "BRAINCLAW_LOGIN_WAIT"), "login_wait", 300))
                 print(f"Sign in in the window that opened; waiting up to {wait_s}s…", file=sys.stderr)
+                def succeeded() -> int:
+                    team = _team_from_url(page.url)
+                    learned = save_learned_workspace(team, entry) if team else {}
+                    emit({"action": "login", "ok": True, "url": page.url,
+                          "profile": str(profile_dir()), **learned})
+                    return 0
+
                 deadline = time.time() + wait_s
                 while time.time() < deadline:
                     if "/client/" in page.url:
-                        emit({"action": "login", "ok": True, "url": page.url, "profile": str(profile_dir())})
-                        return 0
+                        return succeeded()
                     page.wait_for_timeout(2000)
-                emit({"action": "login", "ok": False, "url": page.url, "profile": str(profile_dir())})
+                # Waiting on the URL alone is not enough: with a perfectly valid
+                # profile the workspace entry can sit on an SSO interstitial and
+                # never reach /client/ (2026-11-12 — ok:false for a session that
+                # whoami called signed in, which would send the user off to sign
+                # in again for nothing). Ask the session itself before failing;
+                # signed_in() lands on the workspace and settles the URL too.
+                if signed_in(page) and "/client/" in page.url:
+                    return succeeded()
+                hint = ""
+                if not args.url:
+                    hint = (" If this workspace is not the default one, retry with "
+                            "--url https://<your-workspace>.slack.com/")
+                emit({"action": "login", "ok": False, "url": page.url,
+                      "entry": entry, "hint": hint, "profile": str(profile_dir())})
                 return 1
 
             if args.command == "whoami":

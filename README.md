@@ -45,17 +45,22 @@ py -3 $D serve                       # one boot, then JSON commands on stdin
 
 ## Configuration
 
-The defaults are the IBM workspace. On another workspace there is exactly one step — copy the template, in place:
+**The workspace id is never something you look up.** Sign in once and the driver reads it from the URL it lands on (`app.slack.com/client/<TEAM>/…`), then writes it into `config.json`:
 
 ```bash
-cp config.example.json config.json      # same folder as the template, next to scripts/
+py -3 scripts/slack_driver.py login --url https://your-workspace.slack.com/
+# {"ok": true, "team": "T0123456", "saved": true, "config": ".../config.json"}
 ```
 
-and set the two keys that matter:
+At a terminal, plain `login` asks for the URL first (press Enter for the default). An agent has no terminal, so it passes `--url` — the flag exists so that nothing has to be typed into a prompt nobody can answer.
+
+The only thing you supply is *where to sign in*. On the IBM workspace there is nothing to supply at all: `login` uses the built-in default and saves what it finds.
+
+What it writes is a plain file you can still edit by hand:
 
 ```json
 {
-  "team": "your-workspace",
+  "team": "T0123456",
   "login_url": "https://your-workspace.slack.com/"
 }
 ```
