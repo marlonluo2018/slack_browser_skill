@@ -16,7 +16,7 @@ One implementation does the work: `scripts/slack_driver.py`. An in-app-browser f
 
 ## Approval
 
-An outgoing Slack message is an outgoing message: same rule as email — **never send without the user approving the exact message text first**. Present the message, get approval, then type and send.
+An outgoing Slack message is an outgoing message: same rule as email — **never send without the user approving the exact message text first**, and **every send is reviewed before presentation**. The send flow — draft to `outbox/`, scanner, review tiered by audience (L&K-internal = scanner + one-line note; any IBM non-L&K or external = full `EMAIL_REVIEW_RULEBOOK.md` review), the two-stage [review]/[revise]/[approve and send] options — lives in `assistant_brain/workflows/SLACK_WORKFLOW.md`. Read it before the first send of a session; this file owns the driver mechanics, that file owns the process.
 
 ## One path: `slack_driver.py`
 
@@ -37,8 +37,20 @@ py -3 $D login
 # is the stored session alive? (exit 0 = yes)
 py -3 $D whoami
 
-# send an approved DM (body from a file — never inline a long body in the shell)
+# send an approved 1:1 DM (body from a file — never inline a long body in the shell)
 py -3 $D send --email someone@cn.ibm.com --text-file outbox/slack-body.txt
+
+# a group DM holds exactly the addresses you repeat
+py -3 $D send --email someone@cn.ibm.com --email other@cn.ibm.com --text-file outbox/slack-body.txt
+
+# or address a conversation by id (the only way to be exact about a group)
+py -3 $D send --channel C0B5H2B7A82 --text-file outbox/slack-body.txt
+
+# resolve without sending: report the conversation id and type, type nothing
+py -3 $D send --email someone@cn.ibm.com --text probe --dry-run
+
+# what does a search resolve to? (member = person, mpim = group DM, channel)
+py -3 $D find --query someone@cn.ibm.com
 
 # send several approved DMs in ONE browser session (one Slack boot for the whole batch)
 py -3 $D send-batch --file outbox/slack-batch.json
@@ -54,6 +66,55 @@ py -3 $D serve
 py -3 $D read --email someone@cn.ibm.com --limit 10
 ```
 
+### Recipient resolution — person vs group
+
+`send` decides the conversation from **the recipient set**, never from "the first search result":
+
+| You pass | It opens | Checked |
+|----------|----------|---------|
+| `--email A` | A's 1:1 DM | channel id starts with `D` |
+| `--email A --email B` | the group DM whose members are exactly A and B | channel id is not `D`, and the group's member list contains both |
+| `--channel ID` | that conversation, by id | landed channel id equals `ID` |
+
+Why this matters (2026-11-11): an address search returns rows of different kinds, and Slack tags each with `data-type` — `member` is a person, `mpim` is a multi-person DM, `channel` is a channel. The old code clicked the first row, so a DM meant for a person landed in a **group DM containing** that person. A search for one address returns e.g.:
+
+```text
+member  "Jiang Yu Wu, Direct Message"     ← the person
+mpim    "Jiang Yu Wu, Wei Wang"           ← a group that merely contains her
+mpim    "Fang Yu Wu, Jiang Yu Wu"
+```
+
+Now the driver filters by `data-type` before clicking, and re-checks the channel id after: a single address that opens anything but a `D…` conversation, or several addresses that open a `D…`, aborts **before anything is typed**. Group membership comes from the row's `aria-label`, so `--email A --email B` matches only a group holding both.
+
+Use `find --query` when you only know a group by its members and want to see the candidates before sending; `--channel` is the exact form.
+
+### Mentions in the body — a literal "@Display Name" becomes a real mention
+
+Typing `@` plus the person's **exact Slack display name** in the body is converted into a real mention on send — no special syntax needed (verified 2026-11-11: `@Marlon Luo` in the self-DM rendered as a golden self-mention). Rules that follow from it:
+
+- Use the name exactly as `find --query` returns it; a near-miss stays plain text.
+- Either the display name or the full name converts. `find` returns the full name ("Meng Ning Luo, Direct Message"), and `@Meng Ning Luo` works; Slack then renders the **display name** in the message ("@Marlon Luo") — verified 2026-11-12 in the self-DM.
+- **`delivered` used to be wrong for mention bodies — fixed 2026-11-12.** The check searched the DOM for the body's typed first line, but a mention renders with the display name, so it looked for `@Meng Ning Luo …` while `@Marlon Luo …` was on screen: two of three test messages reported `delivered: false` *after* arriving, and a caller that trusts only `true` is one step from sending the duplicate. `send`, `send-batch` and `serve` now try the body plus the chunks with mentions and emoji cut out, then fall back to the newest message for a short body (`@Meng Ning Luo 你好`). Regression 2026-11-12: 3 of 3 `delivered: true`, three messages on screen, no duplicates.
+- A body that is **only** a mention ("@Marlon Luo" and nothing else) leaves nothing to search for; `delivered` stays a weak signal there — confirm with `read`.
+- A mention in a 1:1 DM only creates a link — the mentioned person is **not** notified unless they are in the conversation. For a notification, send to a group containing them.
+- When the rendering matters, read the message back and confirm it looks like a mention; if it is plain text, say so instead of assuming. A real mention is an `a.c-member_slug--mention` with `data-stringify-type="mention"` and `data-member-id`, not a `span.mention` — a selector expecting the latter finds nothing and reads like "no mention".
+
+### `read` needs to poll — the pane is slow
+
+`read` returned `[]` on a healthy conversation twice (2026-11-11) because the message pane takes ~8 s to render: at 1.5 s `role=listitem` holds a single **empty** shell ("Loading history…"). `read_dm` now polls up to 20 s for non-empty rows and scrolls to the newest before slicing, so an empty `messages` array means the conversation really has no text, not that it rendered late.
+
+### Slow links: wait on state, never on a fixed sleep
+
+A home connection widened every race and produced a wrong send (2026-11-11, a message meant for an LC landed in the operator's own DM). What the fixes encode:
+
+- **A `D…` channel is not proof of the right DM** — the self-DM is also `D…`. `open_conversation` now requires the composer to name the intended person before anything is typed.
+- **Search results arrive progressively**: the "Search for: …" placeholder row (`data-type=queryUser`) paints first. Counting it as a result made the poll exit early and report "no person matched". Only `member`/`mpim`/`channel`/`private` rows count.
+- **Ctrl+K opens two different surfaces** — the search modal in a conversation, the New-message composer page on Home (destination rows carry no `data-type`). Both are handled.
+- **A DM switch took ~15 s** on this link; waits are now 40 s on state (composer label), not a fixed 2.5 s.
+- **Result rows re-render while loading**, so click by accessible name, not a captured index.
+- **`delivered` is polled for 20 s** — a 3 s check reported `delivered: false` for a message that had in fact been sent.
+- **`read` and `delete` poll the pane** (it needs ~8 s): a fixed 1.5 s wait returned `[]` / `matched: 0` on content that existed.
+
 ### Resident mode (`serve`)
 
 Cold starts are the driver's weak point: each one pays Slack's ~15 s boot. For any session that will send/read more than once, start the resident mode instead:
@@ -66,7 +127,9 @@ One JSON object per line in, one JSON object per line out, in order:
 
 ```text
 {"cmd":"whoami"}
-{"cmd":"send","email":"someone@cn.ibm.com","text":"..."}
+{"cmd":"send","emails":["someone@cn.ibm.com"],"text":"..."}
+{"cmd":"send","emails":["a@cn.ibm.com","b@cn.ibm.com"],"text":"..."}
+{"cmd":"send","channel":"C0B5H2B7A82","text":"..."}
 {"cmd":"read","email":"someone@cn.ibm.com","limit":5}
 {"cmd":"delete","email":"someone@cn.ibm.com","match":"keyword"}
 {"cmd":"reload"}

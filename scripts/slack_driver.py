@@ -162,60 +162,361 @@ def _first_person_option(page, timeout_ms: int, max_options: int = 5):
     return None
 
 
-def open_dm(page, email: str, timeout_ms: int = DEFAULT_TIMEOUT_MS) -> None:
-    """Open the DM for an exact address. Email first; names collide.
+def _channel_id(page) -> str:
+    """Conversation id from the URL: `D…` is a 1:1 DM, `C…`/`G…` is a group."""
+    match = re.search(r"/client/[^/]+/([A-Za-z0-9]+)", page.url)
+    return match.group(1) if match else ""
 
-    Preferred path: the Ctrl+K quick switcher finds an existing conversation by
-    address and switches straight to it. The New-message panel is the fallback
-    for people with no DM yet; its To: box also restores stale draft state
-    (observed 2026-11-10), so fill, wait for the list to filter, then click the
-    person row rather than pressing Enter.
+
+def _quick_switch(page, query_text: str) -> list[dict]:
+    """Ctrl+K, type the query, return the result rows as dicts.
+
+    Slack tags every row with `data-type`: `member` is a person (opening it gives
+    a 1:1 DM), `mpim` is a multi-person DM, `channel` is a channel. That tag —
+    not the label, not the order — is what makes "person or group?" decidable
+    before clicking. Measured 2026-11-11: an address search returned member
+    "Jiang Yu Wu, Direct Message" first and two mpims ("Jiang Yu Wu, Wei Wang",
+    "Fang Yu Wu, Jiang Yu Wu") after it, and the old code clicked the first row
+    and landed in the wrong kind of conversation.
     """
     dismiss_overlays(page)
     page.keyboard.press("Control+k")
     page.wait_for_timeout(1200)
     query = page.get_by_role("combobox", name="Query")
-    if query.count() > 0:
-        query.first.fill(email)
-        person = _first_person_option(page, 10_000, max_options=6)
-        if person is not None:
-            person.click(timeout=timeout_ms)
-            page.wait_for_timeout(2500)
-        else:
-            page.keyboard.press("Escape")
-    if page.get_by_role("textbox", name=re.compile(r"^Message to")).count() > 0:
-        return
+    if query.count() == 0:
+        raise SystemExit("quick switcher did not open (Ctrl+K)")
+    query.first.fill(query_text)
+    page.wait_for_timeout(1500)
 
-    if page.get_by_role("combobox", name="To:").count() == 0:
-        page.get_by_role("button", name="New message").first.click(timeout=timeout_ms)
-        page.get_by_role("combobox", name="To:").wait_for(state="visible", timeout=timeout_ms)
-    combo = page.get_by_role("combobox", name="To:").first
-    combo.fill(email)                    # fill replaces restored draft text
-    person = _first_person_option(page, timeout_ms, max_options=2)
-    if person is not None:
-        person.click(timeout=timeout_ms)
-    deadline = time.time() + timeout_ms / 1000
-    while time.time() < deadline:
-        if page.get_by_role("textbox", name=re.compile(r"^Message to")).count() > 0:
-            return
-        # Ambiguous entry trap: clear the field and Slack opens the existing DM.
-        notice = page.get_by_text(re.compile("multiple matches", re.I))
-        if notice.count() > 0:
-            for _ in range(len(email) + 8):
-                combo.press("Backspace")
-            page.wait_for_timeout(1500)
-            if page.get_by_role("textbox", name=re.compile(r"^Message to")).count() > 0:
-                return
-        page.wait_for_timeout(500)
-    raise SystemExit(f"could not resolve a DM for {email}")
+    def _collect() -> list[dict]:
+        """Rows from whichever surface Ctrl+K opened.
+
+        In a conversation view Ctrl+K opens the search modal, whose rows carry
+        `data-type` (member/mpim/channel). On Home it opens the New-message
+        composer page instead, whose destination rows carry no `data-type` but
+        can still open a person's DM — ignoring them made the same query resolve
+        or not depending on which view the session happened to be on
+        (2026-11-11).
+        """
+        collected: list[dict] = []
+        usable = {"member", "mpim", "channel", "private"}
+        found = page.locator('li[role="option"][data-type]')
+        for idx in range(found.count()):
+            node = found.nth(idx)
+            kind = (node.get_attribute("data-type") or "").strip()
+            # "queryUser"/"querySalesforce" are the "Search for: …" placeholders
+            # Slack paints *before* the people results arrive. Treating them as
+            # results made the poll exit early and the caller report "no person
+            # matched" (2026-11-11).
+            if kind not in usable:
+                continue
+            collected.append(
+                {
+                    "index": idx,
+                    "type": kind,
+                    "label": " ".join((node.get_attribute("aria-label") or "").split()),
+                    "text": " ".join((node.inner_text() or "").split()),
+                }
+            )
+        if not collected:
+            dest = page.locator('[role="option"][data-qa="composer_page__destination_option"]')
+            for idx in range(dest.count()):
+                node = dest.nth(idx)
+                text = " ".join((node.inner_text() or "").split())
+                collected.append(
+                    {
+                        "index": idx,
+                        "type": "destination",
+                        "label": text,
+                        "text": text,
+                    }
+                )
+        return collected
+
+    # Slow links widen the race between typing and Slack's debounced search: a
+    # single fill + fixed wait returned an empty list for a person who resolves
+    # (2026-11-11). Poll, then retype character by character once — keystrokes
+    # reliably trigger the search, a bulk value assignment may not.
+    rows = _collect()
+    deadline = time.time() + 20
+    while not rows and time.time() < deadline:
+        page.wait_for_timeout(1000)
+        rows = _collect()
+    if not rows:
+        query.first.fill("")
+        query.first.type(query_text, delay=60)
+        deadline = time.time() + 20
+        while not rows and time.time() < deadline:
+            page.wait_for_timeout(1000)
+            rows = _collect()
+    return rows
+
+
+def _click_row(page, index: int, timeout_ms: int, label: str = "") -> None:
+    """Click a search row.
+
+    Prefer the row's accessible name: the result list re-renders while it loads,
+    so an index captured a moment earlier can point at a different row and the
+    click lands on the wrong one (or nowhere) — the composer then still shows the
+    previous conversation (2026-11-11). Fall back to the index only when no label
+    was captured, and retry once: the first click after a view change can also be
+    swallowed by the transition.
+    """
+    row = (
+        page.get_by_role("option", name=label).first
+        if label
+        else page.locator('li[role="option"][data-type]').nth(index)
+    )
+    try:
+        row.click(timeout=timeout_ms)
+    except PWTimeout:
+        dismiss_overlays(page)
+        page.wait_for_timeout(1000)
+        row.click(timeout=timeout_ms, force=True)
+    page.wait_for_timeout(2500)
+
+
+def _person_name(label: str) -> str:
+    """'Jiang Yu Wu, Direct Message' → 'Jiang Yu Wu'."""
+    for suffix in (", Direct Message", ", DM"):
+        if label.endswith(suffix):
+            return label[: -len(suffix)].strip()
+    return label.strip()
+
+
+def find_rows(page, query_text: str) -> dict:
+    """List what a search resolves to — for choosing a group before sending."""
+    rows = _quick_switch(page, query_text)
+    page.keyboard.press("Escape")
+    return {
+        "action": "find",
+        "query": query_text,
+        "rows": [
+            {"type": row["type"], "label": row["label"]} for row in rows
+            if row["type"] in ("member", "mpim", "channel", "private")
+        ],
+    }
+
+
+def open_conversation(
+    page,
+    recipients: list[str],
+    channel: str | None = None,
+    timeout_ms: int = DEFAULT_TIMEOUT_MS,
+) -> str:
+    """Open exactly the conversation the caller named; return its channel id.
+
+    Identity is the recipient set or an explicit channel id — never "the first
+    search result". One address may only open a `member` row (a 1:1 DM); two or
+    more may only open an `mpim` row whose member list contains all of them. The
+    channel id is checked again after the click, so a mis-click aborts before
+    anything is typed.
+    """
+    addresses = [r.strip() for r in recipients if r and r.strip()]
+
+    if channel:
+        page.goto(f"{SLACK}/{TEAM}/{channel}", wait_until="domcontentloaded")
+        page.wait_for_timeout(3000)
+        opened = _channel_id(page)
+        # A Slack USER id (W…/U…) is NOT navigable: /client/<team>/<user> silently
+        # keeps the previous conversation, so the landing id stays whatever was
+        # open (measured 2026-11-11 — the URL never changed). Fail fast with the
+        # right instruction instead of pretending it might redirect.
+        if channel[:1] in ("W", "U"):
+            raise SystemExit(
+                f"{channel} looks like a Slack user id; /client/<team>/<user> is ignored by Slack. "
+                "Resolve the person with --email instead, or pass the DM channel id (D…)"
+            )
+        if opened != channel:
+            raise SystemExit(f"could not open channel {channel} (landed on {opened or page.url})")
+        return opened
+
+    if not addresses:
+        raise SystemExit("no recipient: pass --email (repeatable) or --channel")
+
+    if len(addresses) == 1:
+        address = addresses[0]
+        rows = _quick_switch(page, address)
+        person = next((r for r in rows if r["type"] == "member"), None)
+        if person is None:
+            # Home view: the composer page lists destinations instead. Take the
+            # first one (the list is already filtered by the address) and use its
+            # own text as the expected name for the post-click verification.
+            person = next((r for r in rows if r["type"] == "destination" and r["text"]), None)
+        if person is None:
+            raise SystemExit(f"no person matched {address} — Slack returned no member row")
+        _click_row(page, person["index"], timeout_ms, person.get("label", ""))
+        expected = _person_name(person["label"])
+        # Slow links leave the previous conversation on screen for seconds and
+        # the old URL is still a "D…" channel, so poll until the composer names
+        # the intended person instead of sampling once (2026-11-11).
+        # A DM switch on a slow link took ~15 s to land here (2026-11-11), so a
+        # 15 s cap sat exactly on the boundary and reported a false mismatch.
+        deadline = time.time() + 40
+        composer_name = ""
+        while time.time() < deadline:
+            try:
+                composer_name = page.get_by_role(
+                    "textbox", name=re.compile(r"^Message to")
+                ).first.get_attribute("aria-label") or ""
+            except Exception:
+                composer_name = ""
+            if expected and expected.lower() in composer_name.lower():
+                break
+            page.wait_for_timeout(800)
+        opened = _channel_id(page)
+        composer_name = ""
+        try:
+            composer_name = page.get_by_role(
+                "textbox", name=re.compile(r"^Message to")
+            ).first.get_attribute("aria-label") or ""
+        except Exception:
+            composer_name = ""
+        if not opened.startswith("D"):
+            raise SystemExit(
+                f"refusing to send: {address} opened {opened or 'an unknown view'}, "
+                "which is not a 1:1 DM"
+            )
+        # A D-channel check cannot catch the self-DM or a swallowed navigation:
+        # the click can fail silently and leave the previous DM open, which is
+        # still a "D…" channel (2026-11-11 — a message meant for Gabriella
+        # landed in Marlon's own DM and passed the check). Require the composer
+        # to name the intended person.
+        if expected and expected.lower() not in composer_name.lower():
+            raise SystemExit(
+                f"refusing to send: opened {opened} but the composer says "
+                f"{composer_name or '(nothing)'!r}, not {expected!r} — the address did not resolve to that DM"
+            )
+        return opened
+
+    # Group: the member set is the identity, so every address must resolve to a
+    # person before any mpim is considered.
+    names: list[str] = []
+    rows = _quick_switch(page, addresses[0])
+    first = next((r for r in rows if r["type"] == "member"), None)
+    if first is None:
+        raise SystemExit(f"no person matched {addresses[0]}")
+    names.append(_person_name(first["label"]))
+    for address in addresses[1:]:
+        later = _quick_switch(page, address)
+        person = next((r for r in later if r["type"] == "member"), None)
+        if person is None:
+            raise SystemExit(f"no person matched {address}")
+        names.append(_person_name(person["label"]))
+
+    rows = _quick_switch(page, addresses[0])
+    candidates = [r for r in rows if r["type"] == "mpim"]
+    target = next((r for r in candidates if all(name in r["label"] for name in names)), None)
+    if target is None:
+        seen = "; ".join(f"{r['label']}" for r in candidates) or "none"
+        raise SystemExit(
+            "no group DM holds exactly " + ", ".join(names)
+            + f" (groups found: {seen}). Run `find --query <name>` and pass --channel <id>"
+        )
+    _click_row(page, target["index"], timeout_ms, target.get("label", ""))
+    opened = _channel_id(page)
+    if opened.startswith("D"):
+        raise SystemExit(f"refusing to send: opened a 1:1 DM ({opened}) instead of the group")
+    return opened
+
+
+def open_dm(page, email: str, timeout_ms: int = DEFAULT_TIMEOUT_MS) -> None:
+    """Open the 1:1 DM for one address (used by read/delete)."""
+    open_conversation(page, [email], timeout_ms=timeout_ms)
 
 
 def composer(page):
     return page.get_by_role("textbox", name=re.compile(r"^Message to")).first
 
 
-def send_dm(page, email: str, text: str) -> dict:
-    open_dm(page, email)
+# What Slack changes on the way in: a typed "@Display Name" becomes a mention
+# that carries the person's *display name*, and emoji become <img>. Neither
+# keeps the characters the caller typed, so a literal probe of the body can
+# miss a message that is plainly on screen (2026-11-12: a self-DM body starting
+# "@Meng Ning Luo" rendered as "@Marlon Luo" and reported delivered=false).
+_EMOJI_CLASS = (
+    r"[\U0001F000-\U0001FAFF\u2190-\u21FF\u2300-\u23FF"
+    r"\u2600-\u27BF\u2B00-\u2BFF\uFE0F\u200D]"
+)
+
+
+def delivery_chunks(text: str, min_len: int) -> list[str]:
+    """The body's pieces with mentions and emoji cut out.
+
+    A mention is `@` plus one to three name tokens ("@Meng Ning Luo"), so every
+    width is cut and the results pooled: the greedy cut is the right one for a
+    two-token name, and the narrower cuts only add candidates that cannot
+    match, which costs nothing because one hit is proof.
+    """
+    line = text.splitlines()[0].strip()
+    out = []
+    for width in range(3):
+        pattern = re.compile(r"@\S+(?:\s+\S+){0,%d}|%s" % (width, _EMOJI_CLASS))
+        for chunk in re.split(pattern, line):
+            chunk = chunk.strip(" ,:;—-·。!?")
+            if len(chunk) >= min_len:
+                out.append(chunk[:40])
+    return list(dict.fromkeys(out))
+
+
+def delivery_probes(text: str) -> list[str]:
+    """Strings to look for anywhere in the page to prove a send landed.
+
+    The body itself comes first — exact, and enough for a plain message. When
+    it holds a mention or an emoji that literal never appears in the DOM, so
+    the surrounding chunks are tried too, at a length long enough not to match
+    some other message by accident.
+    """
+    line = text.splitlines()[0].strip()
+    return list(dict.fromkeys([line[:40]] + delivery_chunks(text, 10)))
+
+
+def latest_message_confirms(page, text: str) -> bool:
+    """Fallback proof for a short body: the newest message is the one just sent.
+
+    "@Meng Ning Luo 你好" has no 10-character chunk left after the mention is
+    cut, so the page-wide probes cannot see it. Scoped to the newest message a
+    3-character chunk is safe: a stray match can only come from that message.
+    """
+    chunks = delivery_chunks(text, 3)
+    if not chunks:
+        return False
+    try:
+        body = page.locator("[data-qa='message-text']").last
+        if body.count() == 0:
+            return False
+        rendered = " ".join((body.inner_text() or "").split())
+    except Exception:
+        return False
+    return any(chunk in rendered for chunk in chunks)
+
+
+def send_message(
+    page,
+    recipients: list[str],
+    text: str,
+    dry_run: bool = False,
+    channel: str | None = None,
+) -> dict:
+    """Send to the conversation the caller named.
+
+    `--email` once → that person's 1:1 DM; `--email` several times → the group DM
+    holding exactly those people; `--channel` → that channel, by id. `dry_run`
+    opens the conversation, reports its id and type, and types nothing.
+    """
+    addresses = [r.strip() for r in recipients if r and r.strip()]
+    opened = open_conversation(page, addresses, channel=channel)
+    kind = "channel" if channel else ("dm" if len(addresses) == 1 else "group")
+    if dry_run:
+        return {
+            "action": "send",
+            "emails": addresses,
+            "kind": kind,
+            "channel": opened,
+            "dry_run": True,
+            "url": page.url,
+            "text": text,
+        }
     box = composer(page)
     box.click()
     box.fill(text)                       # fill replaces leftovers; type() appends
@@ -227,15 +528,41 @@ def send_dm(page, email: str, text: str) -> dict:
     send.click()
     page.wait_for_timeout(3000)
 
-    probe = text.splitlines()[0][:40]
-    delivered = page.get_by_text(probe, exact=False).count() > 0
+    # Poll for the sent text: on a slow link 3 s was not enough to paint the
+    # message, so a delivered message was reported as delivered=false
+    # (2026-11-11, Gabriella DM). Absence after the window is still "not seen".
+    # The probe list matters as much as the window: a mention or an emoji in
+    # the body changes what the DOM holds, so try every candidate and accept
+    # the first that appears (2026-11-12).
+    probes = delivery_probes(text)
+    delivered = False
+    deadline = time.time() + 20
+    while not delivered and time.time() < deadline:
+        for probe in probes:
+            try:
+                if page.get_by_text(probe, exact=False).count() > 0:
+                    delivered = True
+                    break
+            except Exception:
+                continue
+        if not delivered:
+            page.wait_for_timeout(1500)
+    if not delivered:
+        delivered = latest_message_confirms(page, text)
     return {
         "action": "send",
-        "email": email,
+        "emails": addresses,
+        "kind": kind,
+        "channel": opened,
         "delivered": delivered,
         "url": page.url,
         "text": text,
     }
+
+
+def send_dm(page, email: str, text: str, dry_run: bool = False) -> dict:
+    """Backwards-compatible single-recipient wrapper."""
+    return send_message(page, [email], text, dry_run=dry_run)
 
 
 def send_batch(page, items: list[dict], delay_ms: int = 1000) -> dict:
@@ -249,19 +576,23 @@ def send_batch(page, items: list[dict], delay_ms: int = 1000) -> dict:
     results = []
     for item in items:
         if not isinstance(item, dict):
-            results.append({"index": len(results), "email": None, "delivered": False,
+            results.append({"index": len(results), "emails": None, "delivered": False,
                             "error": "item is not an object"})
             continue
-        email = (item.get("email") or "").strip()
+        recipients = item.get("emails") or item.get("email") or []
+        if isinstance(recipients, str):
+            recipients = [recipients]
+        recipients = [str(r).strip() for r in recipients if str(r).strip()]
         text = (item.get("text") or "").strip()
         try:
-            if not email or not text:
-                raise SystemExit("item needs non-empty email and text")
-            result = send_dm(page, email, text)
+            if not recipients or not text:
+                raise SystemExit("item needs non-empty emails and text")
+            result = send_message(page, recipients, text)
             results.append({"index": len(results), **result})
         except (SystemExit, PWTimeout) as exc:
             detail = str(exc).splitlines()[0][:200]
-            results.append({"index": len(results), "email": email, "delivered": False, "error": detail})
+            results.append({"index": len(results), "emails": recipients, "delivered": False,
+                            "error": detail})
         page.wait_for_timeout(delay_ms)
     sent = sum(1 for r in results if r.get("delivered"))
     return {"action": "send-batch", "total": len(items), "sent": sent, "results": results}
@@ -273,9 +604,21 @@ def message_rows(page, match: str):
 
 def delete_dm(page, email: str, match: str) -> dict:
     open_dm(page, email)
-    page.wait_for_timeout(1500)
+    # Same slow-pane problem as read_dm: at 1.5 s nothing is rendered, so the
+    # match count was 0 on a message that exists (2026-11-11). Poll for rows.
+    deadline = time.time() + 20
     rows = message_rows(page, match)
     total = rows.count()
+    while total == 0 and time.time() < deadline:
+        page.wait_for_timeout(1500)
+        rows = message_rows(page, match)
+        total = rows.count()
+        if page.get_by_role("listitem").count() > 1:
+            # pane has rendered; one more pass is enough
+            page.wait_for_timeout(1000)
+            rows = message_rows(page, match)
+            total = rows.count()
+            break
     if total == 0:
         return {"action": "delete", "email": email, "matched": 0, "deleted": 0}
 
@@ -330,17 +673,44 @@ def delete_dm(page, email: str, match: str) -> dict:
 
 
 def read_dm(page, email: str, limit: int) -> dict:
+    """Return the tail of a conversation.
+
+    The pane loads asynchronously: 1.5 s after `open_dm` it still reads
+    "Loading history…" and `role=listitem` holds a single empty shell, so a
+    fixed sleep returned [] every time (measured 2026-11-11 — the pane needed
+    ~8 s). Poll for real message rows instead, then scroll to the newest.
+    """
     open_dm(page, email)
-    page.wait_for_timeout(1500)
-    rows = page.get_by_role("listitem")
-    count = rows.count()
-    out = []
-    for i in range(max(0, count - limit), count):
-        label = rows.nth(i).get_attribute("aria-label") or rows.nth(i).inner_text()
-        text = " ".join((label or "").split())
-        if text:
-            out.append(text)
-    return {"action": "read", "email": email, "messages": out}
+
+    def _rows() -> list[str]:
+        items = page.get_by_role("listitem")
+        out = []
+        for i in range(items.count()):
+            label = items.nth(i).get_attribute("aria-label") or items.nth(i).inner_text()
+            text = " ".join((label or "").split())
+            if text:
+                out.append(text)
+        return out
+
+    deadline = time.time() + 20
+    messages = _rows()
+    while not messages and time.time() < deadline:
+        page.wait_for_timeout(1500)
+        messages = _rows()
+
+    # Older history renders first; put the newest at the bottom before slicing.
+    try:
+        page.evaluate(
+            "() => { const p = document.querySelector('.p-message_pane');"
+            " const s = p && p.querySelector('[data-qa=\"message_list\"], .c-virtual_list__scroll_container');"
+            " if (s) s.scrollTop = s.scrollHeight; else if (p) p.scrollTop = p.scrollHeight; }"
+        )
+        page.wait_for_timeout(1500)
+        messages = _rows() or messages
+    except Exception:
+        pass
+
+    return {"action": "read", "email": email, "messages": messages[-limit:]}
 
 
 def diagnose(page, seconds: int = 45) -> int:
@@ -442,12 +812,17 @@ def serve(page) -> int:
             if cmd == "whoami":
                 emit({"action": "whoami", "signed_in": signed_in(page), "url": page.url})
             elif cmd == "send":
-                email = (req.get("email") or "").strip()
+                raw = req.get("emails") or req.get("email") or []
+                if isinstance(raw, str):
+                    raw = [raw]
+                recipients = [str(r).strip() for r in raw if str(r).strip()]
                 text = (req.get("text") or "").strip()
-                if not email or not text:
-                    emit({"action": "send", "delivered": False, "error": "email and text are required"})
+                if not recipients or not text:
+                    emit({"action": "send", "delivered": False, "error": "emails and text are required"})
                 else:
-                    emit(send_dm(page, email, text))
+                    emit(send_message(page, recipients, text,
+                                      dry_run=bool(req.get("dry_run")),
+                                      channel=(req.get("channel") or None)))
             elif cmd == "delete":
                 emit(delete_dm(page, (req.get("email") or "").strip(), (req.get("match") or "").strip()))
             elif cmd == "read":
@@ -477,11 +852,25 @@ def main() -> int:
     p_diag = sub.add_parser("diagnose", help="record HTTP statuses, console errors and render timeline")
     p_diag.add_argument("--seconds", type=int, default=45, help="how long to watch (default 45)")
 
-    p_send = sub.add_parser("send", help="send a DM")
-    p_send.add_argument("--email", required=True)
+    p_send = sub.add_parser("send", help="send to a 1:1 DM (one --email) or a group DM (several)")
+    p_send.add_argument(
+        "--email",
+        action="append",
+        dest="email",
+        help="recipient address; repeat to open the group DM holding exactly those people",
+    )
+    p_send.add_argument(
+        "--channel",
+        help="send to this channel/group id instead of resolving --email",
+    )
     p_send.add_argument("--text")
     p_send.add_argument("--text-file")
     p_send.add_argument("--text-stdin", action="store_true")
+    p_send.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="open the resolved conversation and report its id/type without typing anything",
+    )
 
     p_batch = sub.add_parser("send-batch", help="send several approved DMs in one browser session")
     p_batch.add_argument("--file", required=True, help="JSON list: [{\"email\": ..., \"text\": ...}, ...]")
@@ -490,6 +879,9 @@ def main() -> int:
     p_del = sub.add_parser("delete", help="delete messages containing a string in a DM")
     p_del.add_argument("--email", required=True)
     p_del.add_argument("--match", required=True)
+
+    p_find = sub.add_parser("find", help="list what a search resolves to (person / group / channel)")
+    p_find.add_argument("--query", required=True, help="address or name")
 
     p_read = sub.add_parser("read", help="read the tail of a DM")
     p_read.add_argument("--email", required=True)
@@ -552,7 +944,17 @@ def main() -> int:
                     text = (args.text or "").strip()
                 if not text:
                     raise SystemExit("empty body")
-                emit(send_dm(page, args.email, text))
+                if not args.email and not args.channel:
+                    raise SystemExit("pass --email (repeatable) or --channel")
+                emit(
+                    send_message(
+                        page,
+                        args.email or [],
+                        text,
+                        dry_run=args.dry_run,
+                        channel=args.channel,
+                    )
+                )
                 return 0
 
             if args.command == "send-batch":
@@ -565,6 +967,10 @@ def main() -> int:
 
             if args.command == "delete":
                 emit(delete_dm(page, args.email, args.match))
+                return 0
+
+            if args.command == "find":
+                emit(find_rows(page, args.query))
                 return 0
 
             if args.command == "read":
