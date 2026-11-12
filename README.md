@@ -1,10 +1,14 @@
 # slack_web_skill
 
-Send and read Slack messages from an agent, through the Slack web UI in a real browser.
+**The solution for when the official Slack API skill or an MCP server is not permitted.**
 
-It drives `app.slack.com` in Chromium using the user's own SSO session — no API token, no bot
-user, no webhook. Config, browser profile and diagnostics live in a directory of the skill's own,
-so it runs standalone and needs no host project around it.
+It sends and reads Slack messages through the Slack web UI: a Chromium window signed in with the
+user's own SSO session, driving `app.slack.com`. No API token, no bot user, no webhook, no app
+registration — nothing that needs an exception from IT, because nothing new is authorised: the agent
+acts as the user already does.
+
+Config, browser profile and diagnostics live in a directory of the skill's own, so it runs standalone
+and needs no host project around it.
 
 ## What it does
 
