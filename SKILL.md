@@ -72,7 +72,7 @@ The session lives in the profile directory, not in a running browser, so closing
 
 ```text
 1. start it, do not block on it
-   py -3 scripts/slack_driver.py login --ask      (background job; login_wait 300 s default)
+   py -3 scripts/slack_driver.py login            (background job; login_wait 300 s default)
 2. tell the user: the window is open, sign in there, say when done
 3. when they say done, read the job output
    {"ok": true, "team": "...", "saved": true}   -> done, and the workspace id is now configured
@@ -85,7 +85,25 @@ The session lives in the profile directory, not in a running browser, so closing
 
 `whoami` cannot be the check while `login` is still running: one browser per profile, so the second process would fail with "profile is already in use" rather than an honest answer. Verify after the job exits — the profile is on disk, not in the browser, so closing the window does not lose it.
 
+**Never pass `--ask` to a background job.** That prompt is on the *caller's* stdin, which for an agent is a pipe nobody can see or type into, so the run stops before the window ever opens and the user sees nothing happen. Observed 2026-11-12: the window never appeared, and only the user asking "do I have to type the workspace link?" exposed it. `--ask` is for a human running the command by hand; from an agent, use `--url` or the configured entry.
+
 If the sign-in needs a passkey and the window does not offer one, set `browser_channel` to an installed browser (`msedge`, `chrome`) and repeat: that is the only part of this flow that has not been verified here.
+
+### Testing a sign-in without touching the real session
+
+The safe way to prove the whole flow — window, human sign-in, saved profile — without risking the session you depend on: point the driver at a throwaway profile.
+
+```bash
+$env:SLACK_SKILL_PROFILE = "$env:TEMP\slack-login-test"   # any empty directory; macOS: /tmp/...
+py -3 scripts/slack_driver.py login                     # headed; the user signs in
+py -3 scripts/slack_driver.py --headless whoami          # same env: signed_in true is the proof
+rm -rf "$env:TEMP/slack-login-test"                      # it is a full Chromium tree
+```
+
+Verified end to end 2026-11-12 on a genuinely empty profile: the window reached IBM SSO, the human signed in, `login` reported `{"ok": true, "team": "E27SFGS2W", "saved": true}`, and `whoami` on that same throwaway profile answered `signed_in: true` — two independent confirmations rather than one assumption restated. The real profile was checked afterwards and was untouched.
+
+One side effect to know: `login` writes the discovered `team` into the **real** `config.json` no matter which profile it is pointed at, because that is what learning the workspace means. Harmless when the values match; surprising if you are testing against a second workspace.
+
 ### Settings — config file, env vars, defaults
 
 `config.json` is read at startup; the table below lists every key.
@@ -277,7 +295,9 @@ Measured from the stored profile on 2026-11-11 (cookie names and expiries only, 
 | `lc` | last-login info | 2026-12-10 |
 | `d-s` | per-browser session marker | session (browser close) |
 
-So the stored profile is good for roughly **13 months** unattended, and closing the browser does not shorten it. Expect earlier death anyway — a password change, MFA re-enrolment, an admin revoking sessions, or IBM re-evaluating device trust all invalidate it immediately.
+So the stored profile is good for roughly **13 months** unattended, and closing the browser does not shorten it.
+
+Re-measured 2026-11-12, one day and several logins later: `d` then read **2027-12-17** — the same 399-day window, one day further out. The expiry slides with use rather than counting down from a fixed date, so an actively used profile keeps renewing itself. That is one day of evidence, not a guarantee; the events above still kill it at any moment. Expect earlier death anyway — a password change, MFA re-enrolment, an admin revoking sessions, or IBM re-evaluating device trust all invalidate it immediately.
 
 **Detection.** Every command already gates on the session. A real expiry is reported as exit code **3** with:
 
