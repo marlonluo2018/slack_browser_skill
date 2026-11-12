@@ -51,7 +51,11 @@ $XDG_DATA_HOME/slack-browser-skill/                     Linux/BSD
 
 Three platform conventions, not two: the first version treated "not Windows" as "Linux", which runs on a Mac but scatters state into `~/.local/share` where no Mac user, backup tool or cleaner looks.
 
-**Why not inside the checkout?** Because of what is in there: a ~460 MB browser profile whose cookies *are* the login. Inside a git working tree that is one `.gitignore` edit, `git add -f` or "zip the folder and share it" away from publishing a live session, and a `git clean -xdf` or a fresh clone silently logs you out. (`outlook_com_skill` does keep `.outlook-skill/` in-repo for standalone runs — the difference is that its state is cache and paths, not credentials.) If you still want a self-contained copy — a USB stick, a throwaway VM — set `SLACK_SKILL_HOME=.state`: a **relative** value resolves against the skill directory, and it is the same string on Windows and macOS. An absolute value is used as given.
+**Why not inside the checkout?** Because of what is in there: a ~460 MB browser profile whose cookies *are* the login. Inside a git working tree that is one `.gitignore` edit, `git add -f` or "zip the folder and share it" away from publishing a live session, and a `git clean -xdf` or a fresh clone silently logs you out. (`outlook_com_skill` does keep `.outlook-skill/` in-repo for standalone runs — the difference is that its state is cache and paths, not credentials.) If you still want a self-contained copy — a USB stick, a throwaway VM — **create `.state/` next to `scripts/`**: its presence alone switches the driver to portable mode, no environment variable and no shell setup. `mkdir .state && cp config.example.json .state/config.json` is the whole procedure, and `.state/` is gitignored, so the settings stay visible in the checkout without ever being committable.
+
+`SLACK_SKILL_HOME` still wins when set: an absolute value is used as given, a **relative** one resolves against the skill directory (`.custom`, `.state/alt`, whatever) — the same string on Windows and macOS.
+
+Three homes are possible, so the driver never makes you guess: `whoami` reports `home`, `config`, `config_found` and `portable`. `config_found: false` means the built-in defaults are what is running.
 
 The session lives in `profile/`, not in a running browser, so closing the window after a successful login keeps it. A profile left at an older, host-owned path (BrainClaw's `slack-profile`) is moved here once on first use, so the cookies — and the login — survive the move.
 

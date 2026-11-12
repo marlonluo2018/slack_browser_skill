@@ -81,17 +81,48 @@ def _resolve(value: str) -> Path:
     return path if path.is_absolute() else (SKILL_ROOT / path)
 
 
+PORTABLE_DIR = ".state"
+
+
 def skill_home() -> Path:
-    """Where this skill keeps its own state: config, profile, diagnostics."""
+    """Where this skill keeps its own state: config, profile, diagnostics.
+
+    Three ways to answer, in order: the SLACK_SKILL_HOME override; a `.state/`
+    directory next to the script, which means portable mode; and otherwise the
+    platform data directory. The middle one exists because the alternative —
+    requiring an env var to keep state visible inside the checkout — reset the
+    very problem the config file was added to solve, since an env var dies with
+    the shell. A directory that is simply *there* needs no shell setup, and it
+    is gitignored, so nothing hidden and nothing committed.
+    """
     override = os.environ.get("SLACK_SKILL_HOME") or os.environ.get("BRAINCLAW_SLACK_HOME")
     if override:
         return _resolve(override)
+    portable = SKILL_ROOT / PORTABLE_DIR
+    if portable.is_dir():
+        return portable
     return _data_base(os.name, os.environ) / HOME_NAME
 
 
 def config_path() -> Path:
     override = os.environ.get("SLACK_SKILL_CONFIG") or os.environ.get("BRAINCLAW_SLACK_CONFIG")
     return _resolve(override) if override else skill_home() / "config.json"
+
+
+def state_report() -> dict:
+    """Where the state really is — the answer to "why is my config ignored?".
+
+    Printed by `whoami`: with three homes possible (override, portable
+    `.state/`, platform directory) a user should never have to guess which one
+    is in play, and `config_found: false` says plainly that the defaults are
+    the ones running.
+    """
+    return {
+        "home": str(skill_home()),
+        "config": str(config_path()),
+        "config_found": config_path().exists(),
+        "portable": skill_home() == SKILL_ROOT / PORTABLE_DIR,
+    }
 
 
 _CONFIG: dict | None = None
@@ -941,7 +972,7 @@ def serve(page) -> int:
                 emit({"action": "quit", "ok": True})
                 return 0
             if cmd == "whoami":
-                emit({"action": "whoami", "signed_in": signed_in(page), "url": page.url})
+                emit({"action": "whoami", "signed_in": signed_in(page), "url": page.url, **state_report()})
             elif cmd == "send":
                 raw = req.get("emails") or req.get("email") or []
                 if isinstance(raw, str):
@@ -1056,7 +1087,7 @@ def main() -> int:
             if args.command == "whoami":
                 if signed_in(page) or signed_in(page):
                     emit({"action": "whoami", "signed_in": True, "url": page.url,
-                          "profile": str(profile_dir())})
+                          "profile": str(profile_dir()), **state_report()})
                     return 0
                 return fail_auth()
 

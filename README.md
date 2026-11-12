@@ -61,6 +61,15 @@ cp config.example.json ~/.local/share/slack-browser-skill/config.json
 
 `team` is the id in `app.slack.com/client/<TEAM>`; `login_url` is the page the sign-in starts on.
 
+Prefer the file to live **in the checkout**, visible next to the code? Create a `.state/` directory next to `scripts/` and put `config.json` in it — the driver detects that directory and uses it, no environment variable needed:
+
+```bash
+mkdir .state && cp config.example.json .state/config.json
+py -3 scripts/slack_driver.py whoami    # prints home/config/portable/found
+```
+
+`whoami` always reports which home won and whether a config file was actually found, so "why is my setting ignored" is one command away. `.state/`, `config.json` and `profile/` are gitignored in both modes.
+
 For a standalone workspace both values are the subdomain; on an Enterprise Grid org the login host is `<org>.enterprise.slack.com` while the team id stays the client id. Every key is optional and every key has an env-var twin (`SLACK_SKILL_TEAM`, `SLACK_SKILL_LOGIN_URL`, …), with **env var > config file > default**; `SLACK_SKILL_HOME` moves the whole state directory, and a *relative* value keeps it inside the checkout (`SLACK_SKILL_HOME=.state`) — `config.json`, `.state/` and `profile/` are gitignored, so that never publishes a machine's settings or its cookies.
 
 `SKILL.md` has the full table, the failure modes, and the first-run checklist.
