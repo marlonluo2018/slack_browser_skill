@@ -37,27 +37,85 @@ except ImportError:  # pragma: no cover - environment problem, reported to the u
 
 SLACK = "https://app.slack.com/client"
 DEFAULT_TIMEOUT_MS = 20_000
+# --- settings: environment variable > config file > built-in default -------
+# The workspace, the login entry and the timeouts differ per machine, and an
+# env var lives only as long as the shell that set it — useless for a second
+# terminal or a scheduled run. The config file carries them across shells; an
+# env var still wins, so a one-off override needs no file edit.
+#
+#   %LOCALAPPDATA%\BrainClaw\slack-config.json   (Windows)
+#   ~/.local/share/brainclaw/slack-config.json   (elsewhere)
+#
+# Its own location is overridable with BRAINCLAW_SLACK_CONFIG.
+
+
+def _config_base() -> Path:
+    if os.name == "nt":
+        base = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+        return base / "BrainClaw"
+    return Path.home() / ".local" / "share" / "brainclaw"
+
+
+def config_path() -> Path:
+    override = os.environ.get("BRAINCLAW_SLACK_CONFIG")
+    return Path(override).expanduser() if override else _config_base() / "slack-config.json"
+
+
+_CONFIG: dict | None = None
+
+
+def config() -> dict:
+    """The JSON config file, or {} when it is absent or unreadable.
+
+    A broken file must not brick sending: it is reported on stderr and
+    ignored, because a working default beats a driver that refuses to start.
+    """
+    global _CONFIG
+    if _CONFIG is not None:
+        return _CONFIG
+    path = config_path()
+    data: dict = {}
+    try:
+        if path.exists():
+            loaded = json.loads(path.read_text(encoding="utf-8-sig"))
+            if not isinstance(loaded, dict):
+                raise ValueError("expected a JSON object")
+            data = loaded
+    except Exception as exc:  # any parse/IO problem is the same to us
+        print(f"ignoring {path}: {exc}", file=sys.stderr)
+        data = {}
+    _CONFIG = data
+    return data
+
+
+def setting(env_name: str, key: str, default):
+    """Resolve one setting: env var, else the config file, else the default."""
+    value = os.environ.get(env_name)
+    if value:
+        return value
+    value = config().get(key)
+    if value not in (None, ""):
+        return value
+    return default
+
+
 # The workspace id (the `/client/<TEAM>` segment). Defaults to the IBM workspace
-# ibm-gbs-lk; anyone on another workspace sets BRAINCLAW_SLACK_TEAM to theirs.
-TEAM = os.environ.get("BRAINCLAW_SLACK_TEAM", "E27SFGS2W")
-# Where `login` starts. The default is the IBM enterprise entry, which redirects
-# into app.slack.com through IBM SSO; a standalone workspace signs in on its own
-# host instead (https://<workspace>.slack.com/), so this is an override, not a
-# constant — without it the first run on any other workspace cannot even start.
-LOGIN_URL = os.environ.get("BRAINCLAW_SLACK_LOGIN_URL", "https://ibm.enterprise.slack.com/")
+# ibm-gbs-lk; another workspace sets `team` or BRAINCLAW_SLACK_TEAM.
+TEAM = setting("BRAINCLAW_SLACK_TEAM", "team", "E27SFGS2W")
+# Where `login` starts: the workspace entry that redirects into app.slack.com
+# through SSO. IBM's is the enterprise entry; a standalone workspace signs in on
+# its own host (https://<workspace>.slack.com/), so this is configurable.
+LOGIN_URL = setting("BRAINCLAW_SLACK_LOGIN_URL", "login_url", "https://ibm.enterprise.slack.com/")
 # The Slack SPA needs ~15s to render its sidebar in Playwright's Chromium;
 # 8s probes returned an empty <body> and looked like a blocked session.
-BOOT_MS = int(os.environ.get("BRAINCLAW_SLACK_BOOT_MS", "15000"))
+BOOT_MS = int(setting("BRAINCLAW_SLACK_BOOT_MS", "boot_ms", 15000))
 
 
 def profile_dir() -> Path:
-    override = os.environ.get("BRAINCLAW_SLACK_PROFILE")
+    override = setting("BRAINCLAW_SLACK_PROFILE", "profile", "")
     if override:
-        return Path(override).expanduser()
-    if os.name == "nt":
-        base = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
-        return base / "BrainClaw" / "slack-profile"
-    return Path.home() / ".local" / "share" / "brainclaw" / "slack-profile"
+        return Path(str(override)).expanduser()
+    return _config_base() / "slack-profile"
 
 
 def emit(payload: dict) -> None:
@@ -917,7 +975,7 @@ def main() -> int:
                 # sign-in form instead, so never start there.
                 page.goto(LOGIN_URL, wait_until="domcontentloaded")
                 print(f"login entry: {LOGIN_URL} (workspace {TEAM})", file=sys.stderr)
-                wait_s = int(os.environ.get("BRAINCLAW_LOGIN_WAIT", "300"))
+                wait_s = int(setting("BRAINCLAW_LOGIN_WAIT", "login_wait", 300))
                 print(f"Sign in in the window that opened; waiting up to {wait_s}s…", file=sys.stderr)
                 deadline = time.time() + wait_s
                 while time.time() < deadline:

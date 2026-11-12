@@ -34,7 +34,36 @@ The stored profile is what keeps the session, so this happens once per machine �
 4. `py -3 $D whoami` → `signed_in: true` means the profile holds the session (exit 3 = a human must sign in).
 5. Prove the whole path on the safe target: send a dummy to your own DM and `read` it back. Nothing reaches a colleague, and it exercises resolution, composer, send and verification in one go.
 
-The session lives in `%LOCALAPPDATA%\BrainClaw\slack-profile`, not in a running browser, so closing the window after a successful login keeps it. Env overrides, all optional: `BRAINCLAW_SLACK_PROFILE` (profile directory), `BRAINCLAW_SLACK_TEAM` (workspace id, default `E27SFGS2W` — the IBM workspace), `BRAINCLAW_SLACK_BOOT_MS` (default 15000; raise it on a slow link).
+The session lives in `%LOCALAPPDATA%\BrainClaw\slack-profile`, not in a running browser, so closing the window after a successful login keeps it.
+
+### Settings — config file, env vars, defaults
+
+One JSON file holds the per-machine settings and is read at startup:
+
+```text
+%LOCALAPPDATA%\BrainClaw\slack-config.json   (Windows)
+~/.local/share/brainclaw/slack-config.json   (elsewhere)
+```
+
+```json
+{ "team": "E27SFGS2W",
+  "login_url": "https://ibm.enterprise.slack.com/",
+  "profile": null,
+  "boot_ms": 15000,
+  "login_wait": 300 }
+```
+
+Every key is optional, every key has an env-var twin, and precedence is **env var > config file > built-in default** — so a one-off override never requires editing the file. `BRAINCLAW_SLACK_CONFIG` points at a different file entirely.
+
+| key | env var | default |
+|-----|---------|---------|
+| `team` | `BRAINCLAW_SLACK_TEAM` | `E27SFGS2W` (the IBM workspace) |
+| `login_url` | `BRAINCLAW_SLACK_LOGIN_URL` | `https://ibm.enterprise.slack.com/` |
+| `profile` | `BRAINCLAW_SLACK_PROFILE` | `%LOCALAPPDATA%\BrainClaw\slack-profile` |
+| `boot_ms` | `BRAINCLAW_SLACK_BOOT_MS` | `15000` (raise it on a slow link) |
+| `login_wait` | `BRAINCLAW_LOGIN_WAIT` | `300` |
+
+A malformed or wrong-shaped file is reported on stderr and ignored — a working default beats a driver that refuses to start (checked 2026-11-12 for absent, valid, env-overridden, malformed and non-object cases).
 
 ### Using a workspace other than IBM's
 
