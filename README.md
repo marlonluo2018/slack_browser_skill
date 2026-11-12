@@ -26,11 +26,17 @@ and friends is a different thing; this one exists because that path is not avail
 | `delete` | delete messages you just sent (verification/cleanup) |
 | `diagnose` | HTTP statuses, console errors, render timeline, screenshot |
 
-## Requirements
+## Install
 
-* Python 3.10+
-* `py -3 -m pip install playwright`
-* `py -3 -m playwright install chromium`
+Python 3.10+ is the only prerequisite. Everything else is one command, and it is safe to re-run:
+
+```bash
+py -3 scripts/install.py        # Windows    (python3 scripts/install.py on macOS/Linux)
+```
+
+It installs Playwright, downloads its Chromium build (~130 MB, once), creates `config.json` from the template if there is none, and prints the two commands for the first sign-in. It never asks for credentials — signing in stays a human step in a visible window.
+
+By hand, the same steps are `py -3 -m pip install playwright` and `py -3 -m playwright install chromium`.
 
 ## Quick start
 

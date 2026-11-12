@@ -28,7 +28,7 @@ The in-app browser (section "Fallback: ZCode in-app browser" at the end) exists 
 
 The stored profile is what keeps the session, so this happens once per machine — and again only if the session actually dies (see "When the session expires").
 
-1. `py -3 -m pip install playwright` and `py -3 -m playwright install chromium`. Once per machine.
+1. `py -3 scripts/install.py` — installs Playwright, downloads its Chromium build (~130 MB, once), and creates `config.json` from the template when there is none. Idempotent, so re-running after an update is safe; the manual equivalent is `py -3 -m pip install playwright` plus `py -3 -m playwright install chromium`.
 2. `py -3 $D login` from the **interactive desktop session**, never a sandboxed/background shell — a headed Chromium started there dies immediately and every later call fails with `TargetClosedError` (same reason as the resident-mode note below). A Chromium window opens on the sign-in entry; **the user signs in with the workspace SSO in it** (IBM SSO by default). Never ask for, type or store the credentials.
 
    **`--headless` cannot sign in, ever**: the email, password, MFA and any passkey are typed by a human into the page, and headless has no page. The driver now refuses at once instead of waiting out `login_wait` (measured: 42 s to refuse vs 300 s of silence). Headless is for the already-signed-in case only — `login --headless` on a live profile returns in ~11 s
