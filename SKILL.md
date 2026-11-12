@@ -10,7 +10,7 @@ operations: ["send-dm", "send-channel", "find-person", "read-thread", "delete-me
 
 # Slack (browser)
 
-Drives Slack web (`ibm.enterprise.slack.com`, which redirects into `app.slack.com`) in a real browser using the user's own SSO session. BrainClaw has no Slack API integration and no app token — a logged-in browser is the only send channel, which is why this skill is named **browser** and lives apart from anything that talks to the Slack API.
+Drives Slack web (`ibm.enterprise.slack.com`, which redirects into `app.slack.com`) in a real browser using the user's own SSO session. This skill has no Slack API integration and no app token — a logged-in browser is the only send channel, which is why this skill is named **browser** and lives apart from anything that talks to the Slack API.
 
 One implementation does the work: `scripts/slack_driver.py`. An in-app-browser fallback is documented at the end, for when the driver cannot run.
 
@@ -20,7 +20,7 @@ An outgoing Slack message is an outgoing message: same rule as email — **never
 
 ## One path: `slack_driver.py`
 
-**Use `assistant_brain/skills/slack_browser_skill/scripts/slack_driver.py` for every Slack send, read and delete — in every harness.** One implementation, one set of behaviours, one place to fix. It needs only `py -3` + Playwright and its own signed-in profile; it makes no assumption about the host's browser tooling, so Claude Code, DeepSeek and ZCode run the identical code.
+**Use `scripts/slack_driver.py` (from the skill directory) for every Slack send, read and delete — in every harness and in every host.** Under BrainClaw that is `assistant_brain/skills/slack_browser_skill/scripts/slack_driver.py`. One implementation, one set of behaviours, one place to fix. It needs only `py -3` + Playwright and its own signed-in profile; it makes no assumption about the host's browser tooling, so Claude Code, DeepSeek and ZCode run the identical code.
 
 The in-app browser (section "Fallback: ZCode in-app browser" at the end) exists only for the case where the driver cannot run — Python/Playwright missing, profile locked by someone else, or Slack refusing the driver's Chromium. Do not reach for it first, and do not keep two live paths "just in case": two paths is how the same message gets sent twice or typed into a public channel.
 
@@ -29,21 +29,28 @@ The in-app browser (section "Fallback: ZCode in-app browser" at the end) exists 
 The stored profile is what keeps the session, so this happens once per machine — and again only if the session actually dies (see "When the session expires").
 
 1. `py -3 -m pip install playwright` and `py -3 -m playwright install chromium`. Once per machine.
-2. `py -3 $D login` from the **interactive desktop session**, never a sandboxed/background shell — a headed Chromium started there dies immediately and every later call fails with `TargetClosedError` (same reason as the resident-mode note below). A Chromium window opens; **the user signs in with IBM SSO in it**. Never ask for, type or store the credentials.
-3. `login` polls for the app to reach `/client/…` and gives up after `BRAINCLAW_LOGIN_WAIT` seconds — **default 300**. If SSO plus MFA needs longer, set it before running (`$env:BRAINCLAW_LOGIN_WAIT=600`). On timeout the command reports `ok: false` and closes the window: a sign-in still in progress is lost. If the SSO had already completed, the cookies are saved anyway — run `whoami` to find out instead of signing in again blindly.
+2. `py -3 $D login` from the **interactive desktop session**, never a sandboxed/background shell — a headed Chromium started there dies immediately and every later call fails with `TargetClosedError` (same reason as the resident-mode note below). A Chromium window opens on `login_url`; **the user signs in with the workspace SSO in it** (IBM SSO by default). Never ask for, type or store the credentials.
+3. `login` polls for the app to reach `/client/…` and gives up after `login_wait` seconds — **default 300**. If SSO plus MFA needs longer, set it before running (`$env:SLACK_SKILL_LOGIN_WAIT=600`, or `login_wait` in the config file). On timeout the command reports `ok: false` and closes the window: a sign-in still in progress is lost. If the SSO had already completed, the cookies are saved anyway — run `whoami` to find out instead of signing in again blindly.
 4. `py -3 $D whoami` → `signed_in: true` means the profile holds the session (exit 3 = a human must sign in).
 5. Prove the whole path on the safe target: send a dummy to your own DM and `read` it back. Nothing reaches a colleague, and it exercises resolution, composer, send and verification in one go.
 
-The session lives in `%LOCALAPPDATA%\BrainClaw\slack-profile`, not in a running browser, so closing the window after a successful login keeps it.
+### State lives with this skill, not with the harness
+
+The driver is its own repo, so it owns its own state — nothing is stored under a host's directory, and no host has to exist for it to run. Everything sits in one directory:
+
+```text
+%LOCALAPPDATA%\slack-browser-skill\            (Windows)
+~/.local/share/slack-browser-skill/            (elsewhere)
+  config.json      settings (below)
+  profile/         the signed-in Chromium profile — this is the session
+  slack-diagnose.png   last `diagnose` screenshot
+```
+
+The session lives in `profile/`, not in a running browser, so closing the window after a successful login keeps it. A profile left at an older, host-owned path (BrainClaw's `slack-profile`) is moved here once on first use, so the cookies — and the login — survive the move.
 
 ### Settings — config file, env vars, defaults
 
-One JSON file holds the per-machine settings and is read at startup:
-
-```text
-%LOCALAPPDATA%\BrainClaw\slack-config.json   (Windows)
-~/.local/share/brainclaw/slack-config.json   (elsewhere)
-```
+`config.json` is read at startup; every path above is overridable with `SLACK_SKILL_HOME`.
 
 ```json
 { "team": "E27SFGS2W",
@@ -53,15 +60,19 @@ One JSON file holds the per-machine settings and is read at startup:
   "login_wait": 300 }
 ```
 
-Every key is optional, every key has an env-var twin, and precedence is **env var > config file > built-in default** — so a one-off override never requires editing the file. `BRAINCLAW_SLACK_CONFIG` points at a different file entirely.
+Every key is optional, every key has an env-var twin, and precedence is **env var > config file > built-in default** — so a one-off override never requires editing the file.
 
 | key | env var | default |
 |-----|---------|---------|
-| `team` | `BRAINCLAW_SLACK_TEAM` | `E27SFGS2W` (the IBM workspace) |
-| `login_url` | `BRAINCLAW_SLACK_LOGIN_URL` | `https://ibm.enterprise.slack.com/` |
-| `profile` | `BRAINCLAW_SLACK_PROFILE` | `%LOCALAPPDATA%\BrainClaw\slack-profile` |
-| `boot_ms` | `BRAINCLAW_SLACK_BOOT_MS` | `15000` (raise it on a slow link) |
-| `login_wait` | `BRAINCLAW_LOGIN_WAIT` | `300` |
+| `team` | `SLACK_SKILL_TEAM` | `E27SFGS2W` (the IBM workspace) |
+| `login_url` | `SLACK_SKILL_LOGIN_URL` | `https://ibm.enterprise.slack.com/` |
+| `profile` | `SLACK_SKILL_PROFILE` | `<home>/profile` |
+| `boot_ms` | `SLACK_SKILL_BOOT_MS` | `15000` (raise it on a slow link) |
+| `login_wait` | `SLACK_SKILL_LOGIN_WAIT` | `300` |
+
+Two more, which have no config key because they locate the file itself: `SLACK_SKILL_HOME` (the directory above) and `SLACK_SKILL_CONFIG` (a different config file).
+
+The first spelling of these variables, `BRAINCLAW_SLACK_*` (and `BRAINCLAW_LOGIN_WAIT`), is still honoured as an alias — the `SLACK_SKILL_*` name wins when both are set.
 
 A malformed or wrong-shaped file is reported on stderr and ignored — a working default beats a driver that refuses to start (checked 2026-11-12 for absent, valid, env-overridden, malformed and non-object cases).
 
@@ -70,8 +81,8 @@ A malformed or wrong-shaped file is reported on stderr and ignored — a working
 The defaults are IBM: entry `https://ibm.enterprise.slack.com/` (IBM SSO) and workspace id `E27SFGS2W`. On another workspace set both before the first run:
 
 ```powershell
-$env:BRAINCLAW_SLACK_LOGIN_URL = "https://<your-workspace>.slack.com/"  # where sign-in starts
-$env:BRAINCLAW_SLACK_TEAM      = "<your-workspace>"                    # the /client/<TEAM> id
+$env:SLACK_SKILL_LOGIN_URL = "https://<your-workspace>.slack.com/"  # where sign-in starts
+$env:SLACK_SKILL_TEAM      = "<your-workspace>"                    # the /client/<TEAM> id
 ```
 
 For a standalone workspace both values are the subdomain; for an Enterprise Grid org the login host is `<org>.enterprise.slack.com` while the team id stays the client id (IBM is a grid, which is why its two values differ).
@@ -193,7 +204,7 @@ A failing command answers `{"action":"<cmd>","error":"..."}` and the session sta
 
 Behaviour that matters:
 
-- **No window needs to stay open.** The SSO session lives in the on-disk profile (`%LOCALAPPDATA%\BrainClaw\slack-profile`), not in a live browser process. Every `send` / `delete` / `read` launches its own Chromium from that profile, reuses the cookies, does the work, then closes it. Closing the browser after `login` does **not** lose the session; the next command works as long as the cookies are not expired (IBM SSO silent re-auth usually refreshes them when `whoami` shows signed in).
+- **No window needs to stay open.** The SSO session lives in the on-disk profile (`<home>/profile`, see "State lives with this skill"), not in a live browser process. Every `send` / `delete` / `read` launches its own Chromium from that profile, reuses the cookies, does the work, then closes it. Closing the browser after `login` does **not** lose the session; the next command works as long as the cookies are not expired (IBM SSO silent re-auth usually refreshes them when `whoami` shows signed in).
 - **One browser per profile, ever.** A persistent Chromium profile can only be opened by one instance at a time — this is also why `serve` must be the only Slack browser running while it lives. A browser left running by an earlier command (or a crashed run) makes every later command fail with `Opening in existing browser session… profile is already in use`. Before blaming the network, list and clear the strays — they are Playwright's own Chromium, not the user's Chrome:
   ```powershell
   Get-CimInstance Win32_Process -Filter "name='chrome.exe'" |
@@ -210,7 +221,7 @@ Behaviour that matters:
 - `delete` hovers the matching row, opens **More actions → Delete message…**, confirms the dialog and reports `{matched, deleted, remaining, reason}`. **The hover toolbar is flaky**: a single `hover()` + 600 ms wait regularly produced `More actions` count 0 and a silent `deleted: 0` (2026-11-10), while an identical manual hover worked. The driver therefore retries the hover up to 4 times (~1.2 s each, offset `position={x:40,y:10}` inside the row) before giving up. `reason` says where it stopped — `deleted-all`, `hover-toolbar-never-appeared`, `delete-menuitem-missing`, `confirm-dialog-missing`, `message-still-present-after-confirm` — so a failure is diagnosable from the JSON alone.
 - **"Signed out" almost always means a stray overlay, not a dead session.** Symptom: every command exits with `not signed in`, yet the profile worked minutes earlier; a manual look shows the app on a DM with a full sidebar. Cause (verified 2026-11-11, screenshot + HTTP log): an open **Ctrl+K quick switcher** or **New message pane** marks the rest of the app `aria-hidden`, so `get_by_role("treeitem")` / `searchbox` / `New message` all return **0** while the UI is visibly fine. `dismiss_overlays()` presses `Escape` (up to twice) before every sign-in check and at the start of `open_dm`, and that turned the false negative into `signed_in: true`.
 - **Do not call it throttling without evidence.** The same symptom was first blamed on Slack rate-limiting. `diagnose` disproved it in 45 s: `http_errors: []`, 98 API calls at normal status, `bodyLen: 3751`, a correct page title — a perfectly healthy page with a modal over it. Run `diagnose` before inventing a server-side explanation.
-- **`diagnose` is the tool for "Slack looks broken".** `py -3 $D diagnose --seconds 45` prints HTTP statuses ≥400, the count of API calls, console errors, and a render timeline (title / body length / sidebar counts every 5 s), and writes a screenshot to `%LOCALAPPDATA%\BrainClaw\slack-diagnose.png`. Read the screenshot before touching the code.
+- **`diagnose` is the tool for "Slack looks broken".** `py -3 $D diagnose --seconds 45` prints HTTP statuses ≥400, the count of API calls, console errors, and a render timeline (title / body length / sidebar counts every 5 s), and writes a screenshot to the skill home (`%LOCALAPPDATA%\slack-browser-skill\slack-diagnose.png` on Windows). Read the screenshot before touching the code.
 - **Do not launch the visible browser from a sandboxed/background shell.** A headed Chromium started that way dies immediately and every Playwright call raises `TargetClosedError: Target has been closed`; identical code run with desktop/foreground execution opens the window and works (both reproductions on 2026-11-10). Same rule as Outlook COM in `ENVIRONMENT.md`: run `login` in the interactive desktop session.
 - The driver resolves people **by email address**. Display names collide in this workspace (two "Wei Wang"), which leaves **Send now** permanently disabled.
 

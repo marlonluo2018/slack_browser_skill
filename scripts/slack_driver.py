@@ -38,27 +38,35 @@ except ImportError:  # pragma: no cover - environment problem, reported to the u
 SLACK = "https://app.slack.com/client"
 DEFAULT_TIMEOUT_MS = 20_000
 # --- settings: environment variable > config file > built-in default -------
-# The workspace, the login entry and the timeouts differ per machine, and an
-# env var lives only as long as the shell that set it — useless for a second
-# terminal or a scheduled run. The config file carries them across shells; an
-# env var still wins, so a one-off override needs no file edit.
+# This driver is its own repo and owns its own state: nothing here is named
+# after the harness that happens to call it. One JSON file carries the
+# per-machine settings across shells — an env var dies with the shell that set
+# it, which is useless for a second terminal or a scheduled run — and an env
+# var still wins, so a one-off override never needs a file edit.
 #
-#   %LOCALAPPDATA%\BrainClaw\slack-config.json   (Windows)
-#   ~/.local/share/brainclaw/slack-config.json   (elsewhere)
+#   %LOCALAPPDATA%\slack-browser-skill\config.json   (Windows)
+#   ~/.local/share/slack-browser-skill/config.json   (elsewhere)
 #
-# Its own location is overridable with BRAINCLAW_SLACK_CONFIG.
+# SLACK_SKILL_* is the current env prefix; the first spelling, BRAINCLAW_SLACK_*,
+# is still accepted as an alias so an existing setup keeps working.
+HOME_NAME = "slack-browser-skill"
 
 
-def _config_base() -> Path:
+def skill_home() -> Path:
+    """Where this skill keeps its own state: config, profile, diagnostics."""
+    override = os.environ.get("SLACK_SKILL_HOME") or os.environ.get("BRAINCLAW_SLACK_HOME")
+    if override:
+        return Path(override).expanduser()
     if os.name == "nt":
         base = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
-        return base / "BrainClaw"
-    return Path.home() / ".local" / "share" / "brainclaw"
+    else:
+        base = Path.home() / ".local" / "share"
+    return base / HOME_NAME
 
 
 def config_path() -> Path:
-    override = os.environ.get("BRAINCLAW_SLACK_CONFIG")
-    return Path(override).expanduser() if override else _config_base() / "slack-config.json"
+    override = os.environ.get("SLACK_SKILL_CONFIG") or os.environ.get("BRAINCLAW_SLACK_CONFIG")
+    return Path(override).expanduser() if override else skill_home() / "config.json"
 
 
 _CONFIG: dict | None = None
@@ -88,11 +96,13 @@ def config() -> dict:
     return data
 
 
-def setting(env_name: str, key: str, default):
-    """Resolve one setting: env var, else the config file, else the default."""
-    value = os.environ.get(env_name)
-    if value:
-        return value
+def setting(env_names, key: str, default):
+    """One setting: env var (any alias), else the config file, else the default."""
+    names = (env_names,) if isinstance(env_names, str) else tuple(env_names)
+    for name in names:
+        value = os.environ.get(name)
+        if value:
+            return value
     value = config().get(key)
     if value not in (None, ""):
         return value
@@ -100,22 +110,49 @@ def setting(env_name: str, key: str, default):
 
 
 # The workspace id (the `/client/<TEAM>` segment). Defaults to the IBM workspace
-# ibm-gbs-lk; another workspace sets `team` or BRAINCLAW_SLACK_TEAM.
-TEAM = setting("BRAINCLAW_SLACK_TEAM", "team", "E27SFGS2W")
+# ibm-gbs-lk; another workspace sets `team` in the config file.
+TEAM = setting(("SLACK_SKILL_TEAM", "BRAINCLAW_SLACK_TEAM"), "team", "E27SFGS2W")
 # Where `login` starts: the workspace entry that redirects into app.slack.com
 # through SSO. IBM's is the enterprise entry; a standalone workspace signs in on
 # its own host (https://<workspace>.slack.com/), so this is configurable.
-LOGIN_URL = setting("BRAINCLAW_SLACK_LOGIN_URL", "login_url", "https://ibm.enterprise.slack.com/")
+LOGIN_URL = setting(("SLACK_SKILL_LOGIN_URL", "BRAINCLAW_SLACK_LOGIN_URL"), "login_url",
+                    "https://ibm.enterprise.slack.com/")
 # The Slack SPA needs ~15s to render its sidebar in Playwright's Chromium;
 # 8s probes returned an empty <body> and looked like a blocked session.
-BOOT_MS = int(setting("BRAINCLAW_SLACK_BOOT_MS", "boot_ms", 15000))
+BOOT_MS = int(setting(("SLACK_SKILL_BOOT_MS", "BRAINCLAW_SLACK_BOOT_MS"), "boot_ms", 15000))
+
+
+def _legacy_profile_dir() -> Path:
+    """Where the profile lived when a harness owned the path (BrainClaw)."""
+    if os.name == "nt":
+        base = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+        return base / "BrainClaw" / "slack-profile"
+    return Path.home() / ".local" / "share" / "brainclaw" / "slack-profile"
 
 
 def profile_dir() -> Path:
-    override = setting("BRAINCLAW_SLACK_PROFILE", "profile", "")
+    """The persistent Chromium profile (cookies — this is the session).
+
+    A profile left at the old harness-owned path is moved into this skill's
+    home once: the cookies are what keep the user signed in, so a path change
+    must not read as "logged out". Same-volume rename, and if it fails the old
+    path is used in place rather than losing the session.
+    """
+    override = setting(("SLACK_SKILL_PROFILE", "BRAINCLAW_SLACK_PROFILE"), "profile", "")
     if override:
         return Path(str(override)).expanduser()
-    return _config_base() / "slack-profile"
+    target = skill_home() / "profile"
+    if not target.exists():
+        legacy = _legacy_profile_dir()
+        if legacy.exists():
+            try:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                os.replace(legacy, target)
+                print(f"moved the Slack profile: {legacy} -> {target}", file=sys.stderr)
+            except OSError as exc:
+                print(f"could not move {legacy} ({exc}); using it in place", file=sys.stderr)
+                return legacy
+    return target
 
 
 def emit(payload: dict) -> None:
@@ -144,7 +181,7 @@ def fail_auth() -> int:
                 "browser and sign in with the workspace SSO; the agent must never handle the credentials.",
         "hint_zh": "Slack 登录已失效。请运行 `slack_driver.py login`，会弹出浏览器窗口，"
                    "由用户在窗口里用工作区 SSO 登录（凭据只在窗口内输入，不要交给 agent）。",
-        "command": f'py -3 assistant_brain/skills/slack_browser_skill/scripts/slack_driver.py login',
+        "command": f'py -3 "{Path(__file__).resolve()}" login',
     })
     return AUTH_EXIT
 
@@ -808,7 +845,7 @@ def diagnose(page, seconds: int = 45) -> int:
     page.on("response", on_response)
     page.on("console", on_console)
 
-    shot = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "BrainClaw" / "slack-diagnose.png"
+    shot = skill_home() / "slack-diagnose.png"
     timeline = []
     for step in range(max(1, seconds // 5)):
         page.wait_for_timeout(5000)

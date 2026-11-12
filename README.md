@@ -2,9 +2,11 @@
 
 Slack through a real browser session — for agents that have no Slack app token.
 
-BrainClaw talks to IBM Slack only as a human would: a Chromium window signed in with the user's
-IBM SSO session, driving `ibm.enterprise.slack.com` (which redirects into `app.slack.com`).
-There is no API token, no bot user, no webhook.
+It talks to Slack only as a human would: a Chromium window signed in with the user's SSO
+session, driving the workspace entry (IBM's is `ibm.enterprise.slack.com`, which redirects into
+`app.slack.com`). There is no API token, no bot user, no webhook. The skill keeps its own state
+— config, profile — in `%LOCALAPPDATA%\slack-browser-skill\`, so it runs standalone and needs
+no host project around it.
 
 This is **not** the official Slack skill. Anything named "slack" that offers ``chat.postMessage``
 and friends is a different thing; this one exists because that path is not available here.
