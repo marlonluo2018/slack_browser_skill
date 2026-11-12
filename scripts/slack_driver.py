@@ -302,14 +302,29 @@ def fail_auth() -> int:
 
 
 def open_context(playwright, *, headless: bool):
+    """Launch the persistent context, on an installed browser if one is named.
+
+    The bundled Chromium is the default and is what every verified run used.
+    A `browser_channel` (or SLACK_SKILL_BROWSER_CHANNEL) can name an installed
+    one instead — "chrome", "msedge", "chrome-beta" — which matters for SSO
+    flows that want a platform authenticator: passkeys and Windows Hello talk
+    to the OS through the browser, and whether Playwright's own Chromium build
+    offers that has not been verified here (2026-11-12). The profile is
+    browser-agnostic, so switching channels does not lose the session.
+    """
     path = profile_dir()
     path.mkdir(parents=True, exist_ok=True)
-    return playwright.chromium.launch_persistent_context(
-        user_data_dir=str(path),
-        headless=headless,
-        viewport={"width": 1440, "height": 900},
-        args=["--no-first-run", "--no-default-browser-check", "--hide-crash-restore-bubble"],
-    )
+    channel = str(setting(("SLACK_SKILL_BROWSER_CHANNEL", "BRAINCLAW_SLACK_BROWSER_CHANNEL"),
+                          "browser_channel", "") or "").strip()
+    options = {
+        "user_data_dir": str(path),
+        "headless": headless,
+        "viewport": {"width": 1440, "height": 900},
+        "args": ["--no-first-run", "--no-default-browser-check", "--hide-crash-restore-bubble"],
+    }
+    if channel:
+        options["channel"] = channel
+    return playwright.chromium.launch_persistent_context(**options)
 
 
 def dismiss_overlays(page, attempts: int = 2) -> bool:
@@ -1132,6 +1147,23 @@ def main() -> int:
                 return serve(page)
 
             if args.command == "login":
+                # A first sign-in needs a window: the email, password, MFA and any
+                # passkey are typed by a human into the page, and headless has no
+                # page to type into. Refuse at once instead of sitting out the
+                # whole login_wait for a URL that cannot arrive (2026-11-12).
+                # An already-signed-in profile is the exception: nothing to type.
+                if args.headless and not signed_in(page):
+                    emit({
+                        "action": "login",
+                        "ok": False,
+                        "headless": True,
+                        "signed_in": False,
+                        "error": "login needs a visible window: the email, password, MFA and "
+                                 "passkey are typed into the page by a human, and headless "
+                                 "has no page. Re-run without --headless.",
+                        "command": f'py -3 "{Path(__file__).resolve()}" login',
+                    })
+                    return 1
                 # The workspace entry redirects into app.slack.com through SSO
                 # (IBM by default); app.slack.com directly shows the generic
                 # sign-in form instead, so never start there.
@@ -1154,14 +1186,24 @@ def main() -> int:
                           f"(currently {LOGIN_URL})", file=sys.stderr)
                 page.goto(entry, wait_until="domcontentloaded")
                 print(f"login entry: {entry} (workspace {TEAM})", file=sys.stderr)
-                wait_s = int(setting(("SLACK_SKILL_LOGIN_WAIT", "BRAINCLAW_LOGIN_WAIT"), "login_wait", 300))
-                print(f"Sign in in the window that opened; waiting up to {wait_s}s…", file=sys.stderr)
+
                 def succeeded() -> int:
                     team = _team_from_url(page.url)
                     learned = save_learned_workspace(team, entry) if team else {}
                     emit({"action": "login", "ok": True, "url": page.url,
                           "profile": str(profile_dir()), **learned})
                     return 0
+
+                # Is this profile already signed in? Then there is nothing to type
+                # and nothing to wait for. The entry can sit on an SSO interstitial
+                # even with a valid profile, so waiting for the URL alone burned the
+                # full login_wait (300 s measured 2026-11-12) before a later check
+                # found the session perfectly alive. Ask first, wait only otherwise.
+                if signed_in(page) and "/client/" in page.url:
+                    return succeeded()
+
+                wait_s = int(setting(("SLACK_SKILL_LOGIN_WAIT", "BRAINCLAW_LOGIN_WAIT"), "login_wait", 300))
+                print(f"Sign in in the window that opened; waiting up to {wait_s}s…", file=sys.stderr)
 
                 deadline = time.time() + wait_s
                 while time.time() < deadline:

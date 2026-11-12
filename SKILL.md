@@ -31,7 +31,11 @@ The stored profile is what keeps the session, so this happens once per machine �
 1. `py -3 -m pip install playwright` and `py -3 -m playwright install chromium`. Once per machine.
 2. `py -3 $D login` from the **interactive desktop session**, never a sandboxed/background shell — a headed Chromium started there dies immediately and every later call fails with `TargetClosedError` (same reason as the resident-mode note below). A Chromium window opens on the sign-in entry; **the user signs in with the workspace SSO in it** (IBM SSO by default). Never ask for, type or store the credentials.
 
-   Off the IBM workspace, pass the entry once: `login --url https://<your-workspace>.slack.com/` (at a terminal, plain `login` asks for it). On success the driver reads the workspace id from the URL and saves `team` + `login_url` into `config.json`, so the one fact a user cannot know up front never has to be typed: `{"ok": true, "team": "T0123456", "saved": true}`.
+   **`--headless` cannot sign in, ever**: the email, password, MFA and any passkey are typed by a human into the page, and headless has no page. The driver now refuses at once instead of waiting out `login_wait` (measured: 42 s to refuse vs 300 s of silence). Headless is for the already-signed-in case only — `login --headless` on a live profile returns in ~11 s
+
+   Off the IBM workspace, pass the entry once: `login --url https://<your-workspace>.slack.com/` (at a terminal, `login --ask` prompts for it).
+
+   **If the SSO wants a passkey**, set `browser_channel` to an installed browser (`msedge`, `chrome`): passkeys and Windows Hello reach the OS through the browser, and whether Playwright's bundled Chromium build exposes that authenticator is unverified (2026-11-12). The profile is browser-agnostic, so switching channel keeps the session. On success the driver reads the workspace id from the URL and saves `team` + `login_url` into `config.json`, so the one fact a user cannot know up front never has to be typed: `{"ok": true, "team": "T0123456", "saved": true}`.
 3. `login` polls for the app to reach `/client/…` and gives up after `login_wait` seconds — **default 300**. If SSO plus MFA needs longer, set it before running (`$env:SLACK_SKILL_LOGIN_WAIT=600`, or `login_wait` in the config file). On timeout the command reports `ok: false` and closes the window: a sign-in still in progress is lost. If the SSO had already completed, the cookies are saved anyway — run `whoami` to find out instead of signing in again blindly.
 4. `py -3 $D whoami` → `signed_in: true` means the profile holds the session (exit 3 = a human must sign in).
 5. Prove the whole path on the safe target: send a dummy to your own DM and `read` it back. Nothing reaches a colleague, and it exercises resolution, composer, send and verification in one go.
@@ -82,7 +86,8 @@ Every key is optional, every key has an env-var twin, and precedence is **env va
 |-----|---------|---------|
 | `team` | `SLACK_SKILL_TEAM` | `E27SFGS2W` (the IBM workspace) |
 | `login_url` | `SLACK_SKILL_LOGIN_URL` | `https://ibm.enterprise.slack.com/` |
-| `profile` | `SLACK_SKILL_PROFILE` | `<home>/profile` |
+| `browser_channel` | `SLACK_SKILL_BROWSER_CHANNEL` | *(none — Playwright's own Chromium)*; `chrome`, `msedge`, `chrome-beta` use an installed browser |
+| `profile` | `SLACK_SKILL_PROFILE` | `profile/` under the data directory |
 | `boot_ms` | `SLACK_SKILL_BOOT_MS` | `15000` (raise it on a slow link) |
 | `login_wait` | `SLACK_SKILL_LOGIN_WAIT` | `300` |
 

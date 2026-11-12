@@ -1,6 +1,7 @@
 {
   "team": "E27SFGS2W",
   "login_url": "https://ibm.enterprise.slack.com/",
+  "browser_channel": null,
   "profile": null,
   "boot_ms": 15000,
   "login_wait": 300

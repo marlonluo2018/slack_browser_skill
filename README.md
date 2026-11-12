@@ -52,7 +52,9 @@ py -3 scripts/slack_driver.py login --url https://your-workspace.slack.com/
 # {"ok": true, "team": "T0123456", "saved": true, "config": ".../config.json"}
 ```
 
-At a terminal, plain `login` asks for the URL first (press Enter for the default). An agent has no terminal, so it passes `--url` — the flag exists so that nothing has to be typed into a prompt nobody can answer.
+`login` needs a visible window — the credentials and any passkey are typed by a human, so `--headless` cannot sign in (it refuses immediately rather than waiting). At a terminal `login --ask` prompts for the URL; an agent passes `--url`, so nothing is ever typed into a prompt nobody can answer.
+
+If your SSO offers a passkey, set `"browser_channel": "msedge"` (or `chrome`) to sign in through an installed browser, which has the platform authenticator; Playwright's bundled Chromium has not been verified to expose it.
 
 The only thing you supply is *where to sign in*. On the IBM workspace there is nothing to supply at all: `login` uses the built-in default and saves what it finds.
 
