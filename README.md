@@ -2,16 +2,42 @@
 
 Slack through a real browser session — for agents that have no Slack app token.
 
-It talks to Slack only as a human would: a Chromium window signed in with the user's SSO
-session, driving the workspace entry (IBM's is `ibm.enterprise.slack.com`, which redirects into
-`app.slack.com`). There is no API token, no bot user, no webhook. The skill keeps its own state
-— config, profile — under a per-user directory of its own (`%LOCALAPPDATA%\slack-web-skill\`
-on Windows, `~/Library/Application Support/slack-web-skill/` on macOS,
-`$XDG_DATA_HOME/slack-web-skill/` on Linux), so it runs standalone and needs no host project
-around it.
+It talks to Slack only as a human would: a Chromium window signed in with the user's SSO session,
+driving the workspace entry (IBM's is `ibm.enterprise.slack.com`, which redirects into
+`app.slack.com`). No API token, no bot user, no webhook — and no host project around it:
+config, profile and diagnostics live in a directory of the skill's own (see Configuration).
 
-This is **not** the official Slack skill. Anything named "slack" that offers ``chat.postMessage``
-and friends is a different thing; this one exists because that path is not available here.
+## Why this exists
+
+The normal way for software to talk to Slack is a Slack app: register it in the workspace, get a
+bot token, call `chat.postMessage`. That route needs two things this environment does not have —
+an app approved by the workspace administrator, and a token that then has to be stored somewhere.
+
+So this skill takes the only channel that is left: **the same one a human uses.** A Chromium window
+signed in with the user's own SSO session, driving the web UI. No app, no bot user, no webhook, no
+token to leak — and nothing to ask an administrator for.
+
+What that buys:
+
+- it works with the permissions the user already has, on the account they already use;
+- messages carry the user's own identity, exactly as if they had typed them;
+- there is no credential anywhere in this repo: the login lives in a browser profile, encrypted by
+  the OS, and the agent never sees or types it.
+
+What it costs, stated plainly:
+
+- **it is slower** — a browser boot is ~15 s where an API call is milliseconds (`serve` amortises
+  it: one boot, many commands);
+- **it needs a human at sign-in** — the SSO prompt, and any MFA or passkey, is typed by the person,
+  so first use per session is attended, never a background job;
+- **it is a UI scraper, so Slack can break it** — the driver locates controls by role and
+  `aria-label` rather than class names for this reason, but a redesign can still break a command.
+
+Those costs are why this is a **fallback, not a replacement**. If a Slack app token ever becomes
+available, use it and retire this skill. Until then, this is the one that works.
+
+This is **not** the official Slack skill. Anything named "slack" that offers `chat.postMessage`
+and friends is a different thing, and it is the better thing when it can be installed.
 
 ## What it does
 
@@ -47,6 +73,17 @@ py -3 $D login                       # visible window, workspace SSO, ~30 s
 py -3 $D whoami                      # {"action":"whoami","signed_in":true,...}
 py -3 $D send --email someone@cn.ibm.com --text-file body.txt
 py -3 $D serve                       # one boot, then JSON commands on stdin
+```
+
+`serve` accepts one JSON object per line:
+
+```text
+{"cmd":"whoami"}
+{"cmd":"send","email":"someone@cn.ibm.com","text":"..."}
+{"cmd":"read","email":"someone@cn.ibm.com","limit":5}
+{"cmd":"delete","email":"someone@cn.ibm.com","match":"keyword"}
+{"cmd":"reload"}
+{"cmd":"quit"}
 ```
 
 ## Configuration
@@ -86,17 +123,6 @@ py -3 scripts/slack_driver.py whoami    # home, config, config_found, portable
 Every key is optional and every key has an env-var twin (`SLACK_SKILL_TEAM`, `SLACK_SKILL_LOGIN_URL`, …), with **env var > config file > default**.
 
 `SKILL.md` has the full table, the failure modes, and the first-run checklist.
-`serve` accepts one JSON object per line:
-
-```text
-{"cmd":"whoami"}
-{"cmd":"send","email":"someone@cn.ibm.com","text":"..."}
-{"cmd":"read","email":"someone@cn.ibm.com","limit":5}
-{"cmd":"delete","email":"someone@cn.ibm.com","match":"keyword"}
-{"cmd":"reload"}
-{"cmd":"quit"}
-```
-
 ## Design notes
 
 * **Email, not display name.** Two people can share a display name in a big workspace; the
