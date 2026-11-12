@@ -40,11 +40,16 @@ By hand, the same steps are `py -3 -m pip install playwright` and `py -3 -m play
 ```bash
 D=scripts/slack_driver.py
 
-py -3 $D login                       # visible window, workspace SSO, ~30 s
-py -3 $D whoami                      # {"action":"whoami","signed_in":true,...}
+py -3 $D login                       # once, in a visible window: you sign in
 py -3 $D send --email someone@cn.ibm.com --text-file body.txt
-py -3 $D serve                       # one boot, then JSON commands on stdin
+py -3 $D --headless whoami           # from now on, headless is fine
+py -3 $D --headless serve            # one boot, then JSON commands on stdin
 ```
+
+**First run is attended, every run after that is not.** `login` opens a Chromium window and waits
+while you sign in with SSO (and whatever verification that asks for); the session is then stored in
+the profile. From then on `--headless` works, because the browser is only re-opening the session,
+not authenticating. Sign in again only when `whoami` exits 3 (`signed_in: false`).
 
 `serve` accepts one JSON object per line:
 
@@ -66,7 +71,7 @@ py -3 scripts/slack_driver.py login --url https://your-workspace.slack.com/
 # {"ok": true, "team": "T0123456", "saved": true, "config": ".../config.json"}
 ```
 
-`login` needs a visible window — the credentials and any passkey are typed by a human, so `--headless` cannot sign in (it refuses immediately rather than waiting). At a terminal `login --ask` prompts for the URL; an agent passes `--url`, so nothing is ever typed into a prompt nobody can answer.
+`login` needs a visible window: the credentials and any passkey are typed by a human, so `--headless` cannot complete a sign-in (it refuses immediately rather than waiting). Everything else runs headless once the session exists. At a terminal `login --ask` prompts for the URL; an agent passes `--url`, so nothing is ever typed into a prompt nobody can answer.
 
 A passkey is entered by the user in that window like any other credential; if the prompt does not appear at all, set `"browser_channel": "msedge"` (or `chrome`) to sign in through an installed browser, which has the platform authenticator. Playwright's bundled Chromium has not been verified either way. When `login` runs as a background job, verify it with `whoami` after it exits — one browser per profile.
 
