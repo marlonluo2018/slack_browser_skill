@@ -67,6 +67,8 @@ The session lives in `profile/`, not in a running browser, so closing the window
   "login_wait": 300 }
 ```
 
+That is exactly `config.example.json` in the repo root — copy it to the state home as `config.json` and edit what differs. The template ships with the repo; a real `config.json` never does: the workspace id and login entry describe one environment, so the file is gitignored here along with `.state/` and `profile/`. That matters for the in-checkout option below — `SLACK_SKILL_HOME=.state` keeps everything local *and* uncommittable.
+
 Every key is optional, every key has an env-var twin, and precedence is **env var > config file > built-in default** — so a one-off override never requires editing the file.
 
 | key | env var | default |

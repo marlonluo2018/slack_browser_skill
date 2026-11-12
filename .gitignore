@@ -6,3 +6,12 @@ venv/
 outbox/
 .DS_Store
 Thumbs.db
+
+# A machine's own settings must never be committed: the workspace id and the
+# login entry describe one environment, and this repo is shared. The template
+# is config.example.json; copy it to the state home (see SKILL.md).
+config.json
+# State kept inside the checkout (SLACK_SKILL_HOME=.state): a browser profile
+# holding session cookies must never be committable.
+.state/
+profile/
