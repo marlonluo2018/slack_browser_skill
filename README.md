@@ -1,10 +1,11 @@
 # slack_web_skill
 
-**Slack messages, where the official Slack API skill and MCP servers are not permitted.**
+**The solution for Slack messages in a company whose IT policy does not permit the official Slack API
+skill or an MCP integration.**
 
-That path is closed: the official integration has to be authorised into the workspace and hold a
-token, and where it is not permitted there is no token to obtain. Asking for one is not a step on the
-way — it is the thing that is disallowed.
+That path is closed by policy, not by an approval still to be obtained: the official integration has
+to be authorised into the workspace and hold a token, and the company has decided against allowing
+that. Asking for a token is not a step on the way — it is the thing that is disallowed.
 
 What is left is the web UI, which is what this drives: `app.slack.com` in Chromium, with the user's
 own SSO session. It sends and reads as the user already does — no API token, no bot user, no webhook,
