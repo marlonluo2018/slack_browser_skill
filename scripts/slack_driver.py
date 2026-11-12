@@ -105,8 +105,23 @@ def skill_home() -> Path:
 
 
 def config_path() -> Path:
+    """The settings file: with the code by default, with the data when portable.
+
+    Handing this skill to someone else is the normal case, and "find your
+    config in a per-user directory" makes that a scavenger hunt. Settings
+    therefore live in the checkout — `config.json` next to `scripts/`, next to
+    the `config.example.json` you copy — and only the bulky, machine-specific
+    profile stays in the data directory. The file is gitignored, so a machine's
+    workspace never travels back into the repo. Portable mode (.state/) keeps
+    everything in one place instead, because that is what portable means.
+    """
     override = os.environ.get("SLACK_SKILL_CONFIG") or os.environ.get("BRAINCLAW_SLACK_CONFIG")
-    return _resolve(override) if override else skill_home() / "config.json"
+    if override:
+        return _resolve(override)
+    home = skill_home()
+    if home == SKILL_ROOT / PORTABLE_DIR:
+        return home / "config.json"
+    return SKILL_ROOT / "config.json"
 
 
 def state_report() -> dict:

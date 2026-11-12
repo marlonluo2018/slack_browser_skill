@@ -45,12 +45,13 @@ py -3 $D serve                       # one boot, then JSON commands on stdin
 
 ## Configuration
 
-The defaults are the IBM workspace. On another workspace, copy the template to the state directory and edit it:
+The defaults are the IBM workspace. On another workspace there is exactly one step — copy the template, in place:
 
 ```bash
-mkdir -p ~/.local/share/slack-browser-skill          # or the equivalent on your OS
-cp config.example.json ~/.local/share/slack-browser-skill/config.json
+cp config.example.json config.json      # same folder as the template, next to scripts/
 ```
+
+and set the two keys that matter:
 
 ```json
 {
@@ -59,18 +60,17 @@ cp config.example.json ~/.local/share/slack-browser-skill/config.json
 }
 ```
 
-`team` is the id in `app.slack.com/client/<TEAM>`; `login_url` is the page the sign-in starts on.
+`team` is the id in `app.slack.com/client/<TEAM>`; `login_url` is the page sign-in starts on. For a standalone workspace both values are the subdomain; on an Enterprise Grid org the login host is `<org>.enterprise.slack.com` while the team id stays the client id.
 
-Prefer the file to live **in the checkout**, visible next to the code? Create a `.state/` directory next to `scripts/` and put `config.json` in it — the driver detects that directory and uses it, no environment variable needed:
+`config.json` is gitignored: it sits in the checkout where you can see and edit it, but a machine's workspace never travels back into the repo. The browser profile — the session itself — lives in the per-user data directory (`%LOCALAPPDATA%\slack-browser-skill\` on Windows, `~/Library/Application Support/slack-browser-skill/` on macOS, `$XDG_DATA_HOME/slack-browser-skill/` on Linux). For a self-contained copy (USB stick, throwaway VM) create `.state/` next to `scripts/` and put the config in there instead — portable mode needs no environment variable.
+
+One command answers "which file am I actually using?":
 
 ```bash
-mkdir .state && cp config.example.json .state/config.json
-py -3 scripts/slack_driver.py whoami    # prints home/config/portable/found
+py -3 scripts/slack_driver.py whoami    # home, config, config_found, portable
 ```
 
-`whoami` always reports which home won and whether a config file was actually found, so "why is my setting ignored" is one command away. `.state/`, `config.json` and `profile/` are gitignored in both modes.
-
-For a standalone workspace both values are the subdomain; on an Enterprise Grid org the login host is `<org>.enterprise.slack.com` while the team id stays the client id. Every key is optional and every key has an env-var twin (`SLACK_SKILL_TEAM`, `SLACK_SKILL_LOGIN_URL`, …), with **env var > config file > default**; `SLACK_SKILL_HOME` moves the whole state directory, and a *relative* value keeps it inside the checkout (`SLACK_SKILL_HOME=.state`) — `config.json`, `.state/` and `profile/` are gitignored, so that never publishes a machine's settings or its cookies.
+Every key is optional and every key has an env-var twin (`SLACK_SKILL_TEAM`, `SLACK_SKILL_LOGIN_URL`, …), with **env var > config file > default**.
 
 `SKILL.md` has the full table, the failure modes, and the first-run checklist.
 `serve` accepts one JSON object per line:

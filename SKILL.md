@@ -36,32 +36,33 @@ The stored profile is what keeps the session, so this happens once per machine �
 
 ### State lives with this skill, not with the harness
 
-The driver is its own repo, so it owns its own state — nothing is stored under a host's directory, and no host has to exist for it to run. Everything sits in one directory:
+The driver is its own repo, so it owns its own state and needs no host around it. Two locations, split by what the thing actually is:
 
 ```text
-%LOCALAPPDATA%\slack-browser-skill\                     Windows
-~/Library/Application Support/slack-browser-skill/      macOS
-$XDG_DATA_HOME/slack-browser-skill/                     Linux/BSD
-  (XDG_DATA_HOME defaults to ~/.local/share)
+<skill>/config.json          settings — with the code, and gitignored
+<skill>/config.example.json  the template that ships
 
-  config.json          settings (below)
-  profile/             the signed-in Chromium profile — this is the session
-  slack-diagnose.png   last `diagnose` screenshot
+%LOCALAPPDATA%\slack-browser-skill\profile\               Windows
+~/Library/Application Support/slack-browser-skill/profile/  macOS
+$XDG_DATA_HOME/slack-browser-skill/profile/                 Linux/BSD
+  (XDG_DATA_HOME defaults to ~/.local/share; slack-diagnose.png sits beside profile/)
 ```
 
-Three platform conventions, not two: the first version treated "not Windows" as "Linux", which runs on a Mac but scatters state into `~/.local/share` where no Mac user, backup tool or cleaner looks.
+**Settings live with the code.** Handing this skill to someone should be "clone, copy the template, log in" — not "now go find your config in a per-user directory". So `config.json` sits next to `scripts/`, right beside the `config.example.json` you copy, and it is gitignored: visible in the checkout, never committable, so one machine's workspace cannot travel back into the repo.
 
-**Why not inside the checkout?** Because of what is in there: a ~460 MB browser profile whose cookies *are* the login. Inside a git working tree that is one `.gitignore` edit, `git add -f` or "zip the folder and share it" away from publishing a live session, and a `git clean -xdf` or a fresh clone silently logs you out. (`outlook_com_skill` does keep `.outlook-skill/` in-repo for standalone runs — the difference is that its state is cache and paths, not credentials.) If you still want a self-contained copy — a USB stick, a throwaway VM — **create `.state/` next to `scripts/`**: its presence alone switches the driver to portable mode, no environment variable and no shell setup. `mkdir .state && cp config.example.json .state/config.json` is the whole procedure, and `.state/` is gitignored, so the settings stay visible in the checkout without ever being committable.
+**Data lives with the machine.** The profile is a ~460 MB Chromium directory whose cookies *are* the login. That is the part that must not sit in a git working tree — one `.gitignore` edit, `git add -f`, or "zip the folder and send it" is all that stands between it and publishing a live session, and a `git clean -xdf` or fresh clone would silently log you out. It goes in the platform data directory, which is also three conventions, not two (the first version treated "not Windows" as "Linux", which runs on a Mac but scatters state into `~/.local/share` where no Mac user, backup tool or cleaner looks).
 
-`SLACK_SKILL_HOME` still wins when set: an absolute value is used as given, a **relative** one resolves against the skill directory (`.custom`, `.state/alt`, whatever) — the same string on Windows and macOS.
+**Portable mode** puts both together for a USB stick or a throwaway VM: create `.state/` next to `scripts/` and the driver switches to it with no environment variable and no shell setup — `mkdir .state`, then copy the template into it. `.state/` is gitignored as well.
 
-Three homes are possible, so the driver never makes you guess: `whoami` reports `home`, `config`, `config_found` and `portable`. `config_found: false` means the built-in defaults are what is running.
+`SLACK_SKILL_HOME` overrides the data directory when set (absolute as given, **relative** resolved against the skill directory); `SLACK_SKILL_CONFIG` overrides the config file alone.
 
-The session lives in `profile/`, not in a running browser, so closing the window after a successful login keeps it. A profile left at an older, host-owned path (BrainClaw's `slack-profile`) is moved here once on first use, so the cookies — and the login — survive the move.
+With three possible data homes the driver never makes you guess: `whoami` reports `home`, `config`, `config_found` and `portable`, and `config_found: false` says plainly that the built-in defaults are what is running.
+
+The session lives in the profile directory, not in a running browser, so closing the window after a successful login keeps it. A profile left at an older, host-owned path (BrainClaw's `slack-profile`) is moved once on first use, so the cookies — and the login — survive the move.
 
 ### Settings — config file, env vars, defaults
 
-`config.json` is read at startup; every path above is overridable with `SLACK_SKILL_HOME`.
+`config.json` is read at startup; the table below lists every key.
 
 ```json
 { "team": "E27SFGS2W",
@@ -71,7 +72,7 @@ The session lives in `profile/`, not in a running browser, so closing the window
   "login_wait": 300 }
 ```
 
-That is exactly `config.example.json` in the repo root — copy it to the state home as `config.json` and edit what differs. The template ships with the repo; a real `config.json` never does: the workspace id and login entry describe one environment, so the file is gitignored here along with `.state/` and `profile/`. That matters for the in-checkout option below — `SLACK_SKILL_HOME=.state` keeps everything local *and* uncommittable.
+That is exactly `config.example.json` in the repo root — `cp config.example.json config.json` in the same folder and edit what differs. The template ships with the repo; a real `config.json` never does, because the workspace id and login entry describe one environment — the file is gitignored, together with `.state/` and `profile/`.
 
 Every key is optional, every key has an env-var twin, and precedence is **env var > config file > built-in default** — so a one-off override never requires editing the file.
 
