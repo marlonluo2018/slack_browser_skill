@@ -1,57 +1,10 @@
 # slack_web_skill
 
-**Read this first: use this skill only if using the official Slack API integrations is not
-permitted where you work.** This is about the *integration*, not about Slack: the company runs Slack,
-and may well run its own Slack apps. What some environments do not permit is wiring an outside agent
-to the workspace through the official Slack API skill or an MCP integration. If that is allowed for
-you, use it — it is faster, sturdier and the better tool. This skill is the fallback for when it is
-not.
+Send and read Slack messages from an agent, through the Slack web UI in a real browser.
 
-Slack through a real browser session — for agents that have no Slack app token.
-
-It talks to Slack only as a human would: a Chromium window signed in with the user's SSO session,
-driving the workspace entry (IBM's is `ibm.enterprise.slack.com`, which redirects into
-`app.slack.com`). No API token, no bot user, no webhook — and no host project around it:
-config, profile and diagnostics live in a directory of the skill's own (see Configuration).
-
-## Why this exists
-
-The normal way for an agent to talk to Slack is an API integration: the official Slack skill or an
-MCP server, authorised into the workspace, holding a token, calling `chat.postMessage` and friends.
-
-**Slack itself is not the problem here.** The workspace is in daily use and the company runs its own
-Slack apps; what some environments do not permit is connecting an *outside* agent to the workspace
-through those official integrations. Where that applies, this is not a missing approval to chase — the
-decision has been made, and the thing to avoid is finding another way to hold the user's credentials.
-That is a policy breach, not a shortcut. So the skill assumes the constraint instead of fighting it.
-
-So this skill uses the one channel a person is already entitled to: **the same one a human uses.** A
-Chromium window signed in with the user's own SSO session, driving the web UI. No app, no bot user, no
-webhook, no token to store — nothing that needs a new grant, and nothing policy has to approve.
-
-What that buys:
-
-- it works with the permissions the user already has, on the account they already use;
-- messages carry the user's own identity, exactly as if they had typed them;
-- there is no credential anywhere in this repo: the login lives in a browser profile, encrypted by
-  the OS, and the agent never sees or types it.
-
-What it costs, stated plainly:
-
-- **it is slower** — a browser boot is ~15 s where an API call is milliseconds (`serve` amortises
-  it: one boot, many commands);
-- **it needs a human at sign-in** — the SSO prompt, and any MFA or passkey, is typed by the person,
-  so first use per session is attended, never a background job;
-- **it is a UI scraper, so Slack can break it** — the driver locates controls by role and
-  `aria-label` rather than class names for this reason, but a redesign can still break a command.
-
-Those costs are why this is a fallback: the API integration is ruled out by policy, not by an approval
-nobody has got round to filing. If that changes where you work, use an API-based skill and retire this
-one. Until then this is the route that stays within the rules, and the costs above are the price of
-staying within them.
-
-This is **not** the official Slack skill. Anything named "slack" that offers `chat.postMessage`
-and friends is a different thing, and a better one wherever policy allows it.
+It drives `app.slack.com` in Chromium using the user's own SSO session — no API token, no bot
+user, no webhook. Config, browser profile and diagnostics live in a directory of the skill's own,
+so it runs standalone and needs no host project around it.
 
 ## What it does
 
@@ -102,7 +55,7 @@ py -3 $D serve                       # one boot, then JSON commands on stdin
 
 ## Configuration
 
-**The workspace id is never something you look up.** Sign in once and the driver reads it from the URL it lands on (`app.slack.com/client/<TEAM>/…`), then writes it into `config.json`:
+`login` reads the workspace id from the URL it lands on (`app.slack.com/client/<TEAM>/…`) and writes it into `config.json`:
 
 ```bash
 py -3 scripts/slack_driver.py login --url https://your-workspace.slack.com/
@@ -113,7 +66,7 @@ py -3 scripts/slack_driver.py login --url https://your-workspace.slack.com/
 
 A passkey is entered by the user in that window like any other credential; if the prompt does not appear at all, set `"browser_channel": "msedge"` (or `chrome`) to sign in through an installed browser, which has the platform authenticator. Playwright's bundled Chromium has not been verified either way. When `login` runs as a background job, verify it with `whoami` after it exits — one browser per profile.
 
-The only thing you supply is *where to sign in*. On the IBM workspace there is nothing to supply at all: `login` uses the built-in default and saves what it finds.
+The only thing you supply is *where to sign in*. If an entry is already configured there is nothing to supply: `login` uses it and saves what it finds.
 
 What it writes is a plain file you can still edit by hand:
 
@@ -136,7 +89,6 @@ py -3 scripts/slack_driver.py whoami    # home, config, config_found, portable
 
 Every key is optional and every key has an env-var twin (`SLACK_SKILL_TEAM`, `SLACK_SKILL_LOGIN_URL`, …), with **env var > config file > default**.
 
-`SKILL.md` has the full table, the failure modes, and the first-run checklist.
 ## Design notes
 
 * **Email, not display name.** Two people can share a display name in a big workspace; the
