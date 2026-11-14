@@ -106,6 +106,27 @@ py -3 scripts/slack_driver.py whoami    # home, config, config_found, portable
 
 Every key is optional and every key has an env-var twin (`SLACK_SKILL_TEAM`, `SLACK_SKILL_LOGIN_URL`, …), with **env var > config file > default**.
 
+## Agent integration (step-wise, correct way)
+
+One-shot `send`/`read` each boots Chromium (~15 s) and must guess the whole path; `serve` is the agent-native way — one browser, many JSON commands, inspectable mid-flight:
+
+```json
+{"cmd":"whoami"}                                      // session alive?
+{"cmd":"send","emails":["a@cn.ibm.com"],"text":"..."} // or send to channel
+{"cmd":"read","email":"a@cn.ibm.com","limit":5}       // tail the conversation
+{"cmd":"delete","email":"a@cn.ibm.com","match":"kw"}  // cleanup
+{"cmd":"reload"}                                       // clear aria-hidden overlay
+{"cmd":"quit"}
+```
+
+Flow (enforced): draft → `EMAIL_REVIEW_RULEBOOK.md` review → `outbox/` → `serve` send → fresh `read` verify. Never send without an approved reviewed draft; a failing `serve` command returns `{"error":"..."}` and stays alive so one bad recipient does not abort the batch. When stuck at sign-in, exit 3 means a human must `login`; when stuck at an overlay (`aria-hidden`), `reload`/`Escape` is the agent's fix before blaming the session.
+
+## How it sees the page — text, not vision
+
+**Primary: DOM text**, not screenshots. Resolution is `data-type` (`member` vs `mpim` vs `channel`), `aria-label`, `role`, `innerText`/`value`; composer and message list are read via `get_by_role` + `innerText`. Screenshots (`slack-diagnose.png` via `diagnose --seconds 45`) are audit for the human when `signed_in:false` looks false (e.g. Ctrl+K overlay with `aria-hidden`).
+
+**No multimodal LLM required**: a text-only model can drive `serve` (`role/aria-label/innerText/value` are all in the DOM); screenshots are for human review and troubleshooting only; multimodal is optional for cross-checking, not required.
+
 ## Design notes
 
 * **Email, not display name.** Two people can share a display name in a big workspace; the
